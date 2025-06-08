@@ -1,56 +1,43 @@
 import streamlit as st
-from openai import OpenAI
+import openai
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# Configura tu clave de API
+openai.api_key = st.secrets["openai_api_key"]
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+def preguntar_a_gpt(prompt):
+    respuesta = openai.chat.completions.create(
+        model="gpt-4-1106-preview",
+        messages=[
+            {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes cuando se solicita una sugerencia técnica bajo normativa NTP o ISO 9001. Responde de forma clara y breve, máximo 3 líneas."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return respuesta.choices[0].message.content
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+st.set_page_config(page_title="ChatBot VDC", layout="centered")
+st.title("🧠 ChatBot VDC - Revisión Técnica")
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+st.markdown("Completa la información del elemento observado. GPT solo actuará si hay observación técnica.")
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+with st.form("formulario_elemento"):
+    descripcion = st.text_input("🔧 Descripción del elemento")
+    especialidad = st.selectbox("🏷️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
+    enlace = st.selectbox("🔗 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
+    evidencia = st.text_input("📎 Tipo de evidencia visual (ej. captura, ficha técnica, otro)")
+    observacion = st.text_area("⚠️ Observación técnica detectada (dejar vacío si no hay)")
+    generar = st.form_submit_button("💡 Generar recomendación")
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+if generar:
+    if descripcion and especialidad:
+        if observacion.strip():
+            prompt = f"Elemento: {descripcion} ({especialidad}). Enlace: {enlace}. Evidencia: {evidencia}. Observación: {observacion}. Sugiere una acción correctiva inmediata y una buena práctica futura (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
+            respuesta = preguntar_a_gpt(prompt)
+            st.success("💡 Recomendación técnica generada:")
+            st.markdown(f"**{respuesta}**")
+        else:
+            st.info("No se ingresó observación. GPT no intervendrá.")
+    else:
+        st.warning("Por favor completa al menos la descripción y especialidad.")
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
-
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+st.markdown("---")
+st.caption("Desarrollado para revisión técnica VDC en sesiones ICE. © Ivan")

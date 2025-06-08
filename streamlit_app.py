@@ -15,7 +15,7 @@ def preguntar_a_gpt(prompt):
     return respuesta.choices[0].message.content
 
 st.set_page_config(page_title="ChatBot VDC", layout="centered")
-st.title("🧠 ChatBot VDC - Revisión Técnica")
+st.title("🧠 ChatBot VDC - DOSSIER DE CALIDAD")
 
 st.markdown("Completa la información del elemento observado. GPT solo actuará si hay observación técnica.")
 

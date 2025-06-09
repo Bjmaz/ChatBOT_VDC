@@ -25,7 +25,7 @@ if formato == "Registrar elementos observados (Formato 1)":
         st.session_state.elementos = []
 
     with st.form("form_elemento"):
-        st.subheader("Completa la información del elemento observado. GPT solo actuará si hay observación técnica.")
+        st.subheader("Completa la información Técnica del elemento observado")
         descripcion = st.text_input("🔧 Descripción del elemento")
         especialidad = st.selectbox("🏷️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
         enlace = st.selectbox("🔗 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])

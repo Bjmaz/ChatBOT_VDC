@@ -40,4 +40,4 @@ if generar:
         st.warning("Por favor completa al menos la descripción y especialidad.")
 
 st.markdown("---")
-st.caption("Desarrollado para revisión técnica VDC en sesiones ICE. © Ivan")
+st.caption("Desarrollado para revisión técnica VDC en sesiones ICE")

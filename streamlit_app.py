@@ -1,89 +1,107 @@
 import streamlit as st
 import openai
 
-# Configura tu clave de API (se obtiene de los secrets del deploy)
+st.set_page_config(page_title="ChatBot VDC - Formato 1", layout="centered")
+st.title("📋 Formato 1 - Evaluación Técnica por Elemento")
+
+# Configura tu clave API
 openai.api_key = st.secrets["openai_api_key"]
 
-def recomendar_gpt(prompt):
-    response = openai.chat.completions.create(
-        model="gpt-4-1106-preview",
-        messages=[
-            {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes cuando se solicita una sugerencia técnica bajo normativa NTP o ISO 9001. Responde de forma clara y breve, máximo 3 líneas."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return response.choices[0].message.content
+# Almacenamiento en sesión
+if "elementos" not in st.session_state:
+    st.session_state.elementos = []
+if "mostrar_campos_finales" not in st.session_state:
+    st.session_state.mostrar_campos_finales = False
 
-st.set_page_config(page_title="ChatBot VDC - Revisión Técnica", layout="centered")
-st.title("\U0001F9E0 ChatBot VDC - DOSSIER DE CALIDAD")
+# Formulario de ingreso por elemento
+st.subheader("🔧 Registro de Elemento Observado")
+nombre_proyecto = st.text_input("🏗️ Nombre del proyecto", key="nombre_proyecto")
+descripcion = st.text_input("Descripción del elemento")
+especialidad = st.selectbox("Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
+enlace = st.selectbox("Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
+evidencia = st.text_input("Tipo de evidencia visual")
+observacion = st.text_area("Observación técnica detectada (obligatoria si desea recomendación)")
 
-formato = st.radio("\U0001F4CC Selecciona un formato:", ["Registrar elementos observados (Formato 1)", "Completar acta de sesión ICE (Formato 2)"])
+if st.button("➕ Agregar elemento"):
+    if descripcion and especialidad:
+        st.session_state.elementos.append({
+            "descripcion": descripcion,
+            "especialidad": especialidad,
+            "enlace": enlace,
+            "evidencia": evidencia,
+            "observacion": observacion
+        })
+        st.success("Elemento agregado correctamente.")
+    else:
+        st.warning("Debe completar al menos la descripción y especialidad para agregar el elemento.")
 
-if formato == "Registrar elementos observados (Formato 1)":
-    st.header("Completa la información Técnica del elemento observado")
+# Mostrar elementos agregados
+if st.session_state.elementos:
+    st.subheader("🧾 Elementos registrados")
+    for idx, elem in enumerate(st.session_state.elementos, 1):
+        st.markdown(f"**Elemento {idx}:** {elem['descripcion']} ({elem['especialidad']})")
 
-    elementos = st.session_state.get("elementos", [])
+    # Botón para generar recomendaciones por elemento
+    if st.button("💡 Generar recomendaciones técnicas"):
+        recomendaciones = []
+        for elem in st.session_state.elementos:
+            if elem['observacion'].strip():
+                prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Enlace: {elem['enlace']}. Evidencia: {elem['evidencia']}. Observación: {elem['observacion']}. Sugiere una acción correctiva inmediata (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
+                respuesta = openai.chat.completions.create(
+                    model="gpt-4-1106-preview",
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes con recomendaciones técnicas bajo normativa NTP o ISO 9001, de forma clara, breve y precisa en máximo 3 líneas."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                recomendaciones.append(respuesta.choices[0].message.content)
+            else:
+                recomendaciones.append("No se ingresó observación técnica. GPT no interviene.")
 
-    with st.form("form_elemento"):
-        proyecto = st.text_input("🏗️ Proyecto")
-        descripcion = st.text_input("🛠️ Descripción del elemento (Ejm. Tubería Agua fría)")
-        especialidad = st.selectbox("✍️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
-        enlace = st.selectbox("🔗 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
-        evidencia = st.text_input("⚙️ Tipo de evidencia visual (ej. captura, ficha técnica, otro)")
-        observacion = st.text_area("⚠️ Observación técnica detectada")
-        agregar = st.form_submit_button("➕ Agregar elemento")
+        st.subheader("📌 Recomendaciones por elemento")
+        for i, rec in enumerate(recomendaciones, 1):
+            st.markdown(f"**Elemento {i}:** {rec}")
 
-        if agregar and descripcion and especialidad:
-            elementos.append({
-                "descripcion": descripcion,
-                "especialidad": especialidad,
-                "enlace": enlace,
-                "evidencia": evidencia,
-                "observacion": observacion
-            })
-            st.session_state.elementos = elementos
-            st.success("Elemento agregado con éxito.")
+        st.session_state.mostrar_campos_finales = True
 
-    if elementos:
-        st.subheader("Elementos registrados:")
-        for idx, elem in enumerate(elementos):
-            st.markdown(f"**{idx+1}.** {elem['descripcion']} ({elem['especialidad']})")
+# Campos adicionales finales (habilitados luego de generar recomendaciones)
+if st.session_state.mostrar_campos_finales:
+    st.subheader("📝 Información Final de la Sesión ICE")
+    acuerdos = st.text_area("📍 Acuerdos finales de sesión ICE (por cada elemento, indicar acuerdos logrados)")
+    estado = st.selectbox("📊 Estado del elemento", ["Aprobado", "Observado", "Por corregir"])
+    duracion = st.text_input("⏱️ Duración total de la sesión ICE (minutos)")
+    responsable = st.text_input("👤 Nombre del responsable de validación")
+    fecha_revision = st.date_input("📅 Fecha de próxima revisión técnica")
 
-        if st.button("🔹 Generar recomendaciones"):
-            for idx, elem in enumerate(elementos):
-                if elem['observacion']:
-                    prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Enlace: {elem['enlace']}. Evidencia: {elem['evidencia']}. Observación: {elem['observacion']}. Sugiere una acción correctiva inmediata y una buena práctica futura (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
-                    respuesta = recomendar_gpt(prompt)
-                    st.markdown(f"**Recomendación para elemento {idx+1}:** {respuesta}")
+    if st.button("🧠 Generar síntesis final y cerrar"):
+        resumen_final = "\n".join([
+            f"Elemento {i+1}: {el['descripcion']} ({el['especialidad']})\nAcción: {recomendaciones[i]}"
+            for i, el in enumerate(st.session_state.elementos)
+        ])
+        prompt_final = f"Basado en los siguientes elementos observados y acuerdos finales: {resumen_final}. Redacta una recomendación técnica súper breve para debatir en la próxima sesión ICE, según NTP o ISO 9001."
 
-            st.session_state.generado = True
+        recomendacion_final = openai.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[
+                {"role": "system", "content": "Eres un asistente técnico VDC. Solo das recomendaciones muy breves según normativa técnica peruana e ISO 9001 para futura sesión ICE."},
+                {"role": "user", "content": prompt_final}
+            ]
+        )
 
-    if st.session_state.get("generado"):
-        st.header("✅ Información final de sesión ICE")
-        comentarios = st.text_area("🗣️ Comentarios en sesión ICE")
-        acuerdos = st.text_area("👍 Acuerdos tomados")
-        estado = st.selectbox("✅ Estado del elemento", ["", "Aprobado", "Observado", "Por Corregir"])
-        duracion = st.text_input("⏱️ Duración total de la sesión ICE (minutos)")
-        responsable = st.text_input("👨‍💼 Responsable de validación")
-        fecha_proxima = st.date_input("🗓️ Fecha de próxima revisión")
+        st.subheader("✅ Recomendación técnica para próxima sesión")
+        st.markdown(f"**{recomendacion_final.choices[0].message.content}**")
 
-        if st.button("🔹 Generar resumen final y recomendación"):
-            for idx, elem in enumerate(elementos):
-                prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Observación: {elem['observacion']}. Proyecto: {proyecto}. Sugiere una recomendación breve para debatir en próxima sesión ICE (NTP o ISO9001, máximo 3 líneas)."
-                resultado = recomendar_gpt(prompt)
-                st.markdown(f"**Recomendación final para elemento {idx+1}:** {resultado}")
+        st.subheader("🧾 Resumen del formulario completado")
+        st.markdown(f"**Proyecto:** {nombre_proyecto}")
+        for i, el in enumerate(st.session_state.elementos, 1):
+            st.markdown(f"- Elemento {i}: {el['descripcion']} ({el['especialidad']})")
+        st.markdown(f"**Acuerdos finales:** {acuerdos}")
+        st.markdown(f"**Estado del elemento:** {estado}")
+        st.markdown(f"**Duración sesión ICE:** {duracion} minutos")
+        st.markdown(f"**Responsable:** {responsable}")
+        st.markdown(f"**Próxima revisión:** {fecha_revision}")
 
-            st.markdown("---")
-            st.subheader("🔢 Resumen final ingresado por el usuario")
-            st.markdown(f"**Proyecto:** {proyecto}")
-            st.markdown(f"**Duración:** {duracion} minutos")
-            st.markdown(f"**Responsable validación:** {responsable}")
-            st.markdown(f"**Fecha próxima revisión:** {fecha_proxima}")
-            st.markdown(f"**Estado del elemento:** {estado}")
-            st.markdown(f"**Comentarios:** {comentarios}")
-            st.markdown(f"**Acuerdos:** {acuerdos}")
-
-            st.success("Gracias por usar el ChatBOT VDC. Nos vemos en la siguiente revisión del Formato 2.")
+        st.success("Gracias por usar el ChatBOT VDC. Nos vemos en la siguiente revisión del Formato 2.")
 
 elif formato == "Completar acta de sesión ICE (Formato 2)":
     st.header("📄 Completar acta de sesión ICE Técnica")

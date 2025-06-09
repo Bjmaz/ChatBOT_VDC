@@ -1,7 +1,7 @@
 import streamlit as st
 import openai
 
-# Configura tu clave de API
+# Configura tu clave de API (se obtiene de los secrets del deploy)
 openai.api_key = st.secrets["openai_api_key"]
 
 def recomendar_gpt(prompt):
@@ -22,20 +22,18 @@ formato = st.radio("\U0001F4CC Selecciona un formato:", ["Registrar elementos ob
 if formato == "Registrar elementos observados (Formato 1)":
     st.header("Completa la información Técnica del elemento observado")
 
+    if "proyecto" not in st.session_state:
+        st.session_state.proyecto = st.text_input("🏗️ Proyecto")
+
     if "elementos" not in st.session_state:
         st.session_state.elementos = []
-    if "generado" not in st.session_state:
-        st.session_state.generado = False
 
     with st.form("form_elemento"):
-        if not st.session_state.elementos:
-            st.session_state.proyecto = st.text_input("\U0001F3D7️ Proyecto")
-
         descripcion = st.text_input("🛠️ Descripción del elemento")
         especialidad = st.selectbox("✍️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
         enlace = st.selectbox("🔗 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
         evidencia = st.text_input("⚙️ Tipo de evidencia visual (ej. captura, ficha técnica, otro)")
-        observacion = st.text_area("⚠️ Observación técnica detectada (dejar vacío si no hay)")
+        observacion = st.text_area("⚠️ Observación técnica detectada")
         agregar = st.form_submit_button("➕ Agregar elemento")
 
         if agregar and descripcion and especialidad:
@@ -54,19 +52,16 @@ if formato == "Registrar elementos observados (Formato 1)":
             st.markdown(f"**{idx+1}.** {elem['descripcion']} ({elem['especialidad']})")
 
         if st.button("🔹 Generar recomendaciones"):
-            st.session_state.recomendaciones = []
             for idx, elem in enumerate(st.session_state.elementos):
                 if elem['observacion']:
                     prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Enlace: {elem['enlace']}. Evidencia: {elem['evidencia']}. Observación: {elem['observacion']}. Sugiere una acción correctiva inmediata y una buena práctica futura (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
                     respuesta = recomendar_gpt(prompt)
-                    st.session_state.recomendaciones.append(respuesta)
                     st.markdown(f"**Recomendación para elemento {idx+1}:** {respuesta}")
-
             st.session_state.generado = True
 
-    if st.session_state.generado:
+    if st.session_state.get("generado"):
         st.header("✅ Información final tras sesión ICE")
-        acuerdos = st.text_area("👍 Acuerdos tomados en sesión ICE")
+        acuerdos = st.text_area("👍 Acuerdos tomados")
         estado = st.selectbox("✅ Estado del elemento", ["", "Aprobado", "Observado", "Por Corregir"])
         duracion = st.text_input("⏱️ Duración total de la sesión ICE (minutos)")
         responsable = st.text_input("👨‍💼 Responsable de validación")
@@ -86,7 +81,6 @@ if formato == "Registrar elementos observados (Formato 1)":
             st.markdown(f"**Fecha próxima revisión:** {fecha_proxima}")
             st.markdown(f"**Estado del elemento:** {estado}")
             st.markdown(f"**Acuerdos:** {acuerdos}")
-
             st.success("Gracias por usar el ChatBOT VDC. Nos vemos en la siguiente revisión del Formato 2.")
 
 elif formato == "Completar acta de sesión ICE (Formato 2)":

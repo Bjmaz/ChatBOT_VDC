@@ -1,119 +1,91 @@
-# chatbot_vdc_app.py
 import streamlit as st
 import openai
 
-# Configura tu clave secreta (colócala en secrets en la nube de Streamlit)
+# Configura tu API Key (se carga desde los secrets del deploy)
 openai.api_key = st.secrets["openai_api_key"]
 
-# Función de recomendación GPT (solo si hay observación)
-def preguntar_a_gpt(prompt):
-    respuesta = openai.chat.completions.create(
+def recomendar_gpt(prompt):
+    response = openai.chat.completions.create(
         model="gpt-4-1106-preview",
         messages=[
-            {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes cuando se solicita una sugerencia técnica bajo normativa NTP o ISO 9001. Sé breve: máximo 3 líneas."},
+            {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes cuando se solicita una sugerencia técnica bajo normativa NTP o ISO 9001. Responde de forma clara y breve, máximo 3 líneas."},
             {"role": "user", "content": prompt}
         ]
     )
-    return respuesta.choices[0].message.content
+    return response.choices[0].message.content
 
-# Página
-st.set_page_config(page_title="ChatBot VDC", layout="centered")
-st.title("🧠 ChatBot VDC - DOSSIER DE CALIDAD")
-st.markdown("---")
+st.set_page_config(page_title="ChatBot VDC - Revisión Técnica", layout="centered")
+st.title("\U0001F9E0 ChatBot VDC - DOSSIER DE CALIDAD")
 
-# Selección inicial
-formato = st.radio("Selecciona una opción:", ["Registrar elementos observados (Formato 1)", "Completar acta de sesión ICE (Formato 2)"])
+formato = st.radio("\u2705 Selecciona un formato:", ["Registrar elementos observados (Formato 1)", "Completar acta de sesión ICE (Formato 2)"])
 
-# FORMATO 1 ----------------------------------------------------------------------
+# FORMATO 1
 if formato == "Registrar elementos observados (Formato 1)":
-    st.subheader("📋 Completa la información del elemento observado. GPT solo actuará si hay observación técnica.")
-    
-    elementos = []
-    continuar = True
+    st.markdown("Completa la información del elemento observado. GPT solo actuará si hay observación técnica.")
 
-    while continuar:
-        with st.form(key=f"form_{len(elementos)}"):
-            descripcion = st.text_input("🔧 Descripción del elemento", key=f"desc_{len(elementos)}")
-            especialidad = st.selectbox("🏷️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"], key=f"esp_{len(elementos)}")
-            enlace = st.selectbox("🔗 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"], key=f"enl_{len(elementos)}")
-            evidencia = st.text_input("📎 Tipo de evidencia visual (ej. captura, ficha técnica, otro)", key=f"evi_{len(elementos)}")
-            observacion = st.text_area("⚠️ Observación técnica detectada (dejar vacío si no hay)", key=f"obs_{len(elementos)}")
-            generar = st.form_submit_button("💡 Generar recomendación")
+    with st.form("formato1"):
+        descripcion = st.text_input("\ud83d\udd27 Descripción del elemento")
+        especialidad = st.selectbox("\ud83c\udff7\ufe0f Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
+        enlace = st.selectbox("\ud83d\udd17 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
+        evidencia = st.text_input("\ud83d\udcc2 Tipo de evidencia visual (ej. captura, ficha técnica, otro)")
+        observacion = st.text_area("\u26a0\ufe0f Observación técnica detectada (dejar vacío si no hay)")
+        generar = st.form_submit_button("\ud83d\udd1d Generar recomendación")
 
-        if generar and descripcion and especialidad:
-            if observacion.strip():
-                prompt = f"Elemento: {descripcion} ({especialidad}). Enlace: {enlace}. Evidencia: {evidencia}. Observación: {observacion}. Sugiere una acción correctiva inmediata y una buena práctica futura (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
-                recomendacion = preguntar_a_gpt(prompt)
-                st.success(f"💡 Recomendación: {recomendacion}")
-            else:
-                st.info("✅ No se ingresó observación. GPT no intervendrá.")
+    if generar and descripcion and especialidad:
+        st.subheader("\ud83c\udf10 Resultado")
+        if observacion.strip():
+            prompt = f"Elemento: {descripcion} ({especialidad}). Enlace: {enlace}. Evidencia: {evidencia}. Observación: {observacion}. Sugiere acción correctiva inmediata y buena práctica futura (máximo 3 líneas, bajo normativa NTP o ISO 9001)."
+            recomendacion = recomendar_gpt(prompt)
+            st.success("\ud83d\udca1 Recomendación técnica:")
+            st.markdown(f"**{recomendacion}**")
 
-            # Recolección de datos posteriores a la sesión
-            comentarios = st.text_area("🗣️ Comentarios en sesión ICE", key=f"com_{len(elementos)}")
-            acuerdos = st.text_area("🤝 Acuerdos tomados", key=f"acu_{len(elementos)}")
-            estado = st.selectbox("✅ Estado del elemento", ["Aprobado", "Observado", "Por Corregir"], key=f"est_{len(elementos)}")
-            elementos.append({
-                "descripcion": descripcion,
-                "especialidad": especialidad,
-                "observacion": observacion,
-                "recomendacion": recomendacion if observacion.strip() else "-",
-                "comentarios": comentarios,
-                "acuerdos": acuerdos,
-                "estado": estado
-            })
-            continuar = st.radio("¿Deseas registrar otro elemento?", ["Sí", "No"], key=f"cont_{len(elementos)}") == "Sí"
+            with st.expander("\ud83d\udcc4 Completar cierre de sesión por elemento"):
+                comentarios = st.text_area("\ud83d\udde3\ufe0f Comentarios en sesión ICE")
+                acuerdos = st.text_area("\ud83d\udc4d Acuerdos tomados")
+                estado = st.selectbox("\u2705 Estado del elemento", ["Aprobado", "Observado", "Por Corregir"])
+                duracion = st.text_input("\u23f1\ufe0f Duración total de la sesión ICE (min)")
 
-    if elementos:
-        st.subheader("📅 Finalizar revisión técnica")
-        duracion = st.text_input("⏱️ Duración de la sesión ICE (en minutos)")
+                if st.button("\ud83d\uddc4\ufe0f Finalizar revisión de elemento"):
+                    st.info("\ud83d\udcca Resumen de elemento:")
+                    st.markdown(f"- **Elemento**: {descripcion}\n- **Especialidad**: {especialidad}\n- **Observación**: {observacion}\n- **Recomendación**: {recomendacion}\n- **Estado**: {estado}\n- **Duración de sesión**: {duracion} minutos")
 
-        st.markdown("---")
-        st.subheader("📋 Recomendaciones para próxima sesión ICE")
-        for e in elementos:
-            if e["observacion"].strip():
-                resumen = f"{e['especialidad']}: {e['descripcion']} → {e['observacion']}"
-                recomendacion = preguntar_a_gpt(f"Con base en este elemento: {resumen}, redacta una recomendación breve para debatir en la próxima sesión ICE, según normativa peruana NTP. Máximo 3 líneas.")
-                st.markdown(f"- 🔧 **{resumen}**\n\n📌 **{recomendacion}**")
+                    resumen_prompt = f"Elemento: {descripcion}, observación: {observacion}. Redacta recomendación corta para debatir en la próxima sesión ICE bajo norma peruana NTP. Máximo 3 líneas."
+                    cierre = recomendar_gpt(resumen_prompt)
+                    st.success("\ud83d\udcc6 Recomendación final para próxima ICE:")
+                    st.markdown(f"**{cierre}**")
+                    st.markdown("\n\u2728 Gracias por usar el ChatBOT VDC. ¡Nos vemos en la próxima revisión del Formato 2!")
+        else:
+            st.info("No se ingresó observación técnica. GPT no generará recomendación.")
 
-        st.success("Gracias por usar el ChatBOT VDC. Nos vemos en la siguiente revisión del Formato 2.")
+# FORMATO 2
+else:
+    st.markdown("Completa el acta técnica de sesión ICE. Se generarán recomendaciones solo si hay problemas registrados.")
 
-# FORMATO 2 ----------------------------------------------------------------------
-elif formato == "Completar acta de sesión ICE (Formato 2)":
-    st.subheader("📄 Llenado manual del Acta de Sesión ICE")
-    proyecto = st.text_input("🏗️ Proyecto")
-    fecha = st.date_input("📅 Fecha de sesión")
-    lider = st.text_input("👤 Líder de sesión")
-    participantes = st.text_area("👥 Participantes")
-    duracion = st.text_input("⏱️ Duración total de la sesión (en minutos)")
+    with st.form("formato2"):
+        proyecto = st.text_input("\ud83c\udfe0 Proyecto")
+        fecha = st.text_input("\ud83d\uddd3\ufe0f Fecha de sesión")
+        lider = st.text_input("\ud83d\udc64 Líder de sesión")
+        participantes = st.text_area("\ud83d\udc65 Participantes")
 
-    temas = []
-    continuar = True
+        tema = st.text_input("\ud83d\udcc2 Tema abordado")
+        problema = st.text_area("\u26a0\ufe0f Problema del tema (dejar vacío si no hay)")
+        generar_tema = st.form_submit_button("\ud83d\udcda Generar recomendación del tema")
 
-    while continuar:
-        with st.form(key=f"tema_{len(temas)}"):
-            tema = st.text_input("🗂️ Tema abordado", key=f"tema_a_{len(temas)}")
-            problema = st.text_area("⚠️ Problema asociado (dejar vacío si no hay)", key=f"prob_{len(temas)}")
-            generar = st.form_submit_button("💡 Generar recomendación por tema")
+    if generar_tema:
+        if problema.strip():
+            prompt_tema = f"Tema: {tema}. Problema detectado: {problema}. Redacta una recomendación breve para proponer durante la sesión ICE. Máximo 3 líneas."
+            recomendacion_tema = recomendar_gpt(prompt_tema)
+            st.success("\ud83d\udcda Recomendación para el tema:")
+            st.markdown(f"**{recomendacion_tema}**")
 
-        if generar and tema:
-            recomendacion = ""
-            if problema.strip():
-                recomendacion = preguntar_a_gpt(f"Tema: {tema}. Problema: {problema}. Redacta una recomendación breve de acuerdo a normativa técnica peruana para proponer durante la sesión ICE. Máximo 3 líneas.")
-                st.success(f"📌 Recomendación: {recomendacion}")
-
-            temas.append({"tema": tema, "problema": problema, "recomendacion": recomendacion})
-            continuar = st.radio("¿Deseas registrar otro tema?", ["Sí", "No"], key=f"cont_tema_{len(temas)}") == "Sí"
-
-    if temas:
-        st.subheader("🤝 Acuerdos finales en la sesión ICE")
-        acuerdos = st.text_area("📄 Acuerdos finales tomados")
-
-        st.markdown("---")
-        st.subheader("📌 Resumen de la sesión:")
-        for t in temas:
-            st.markdown(f"- Tema: **{t['tema']}**\n  - Problema: {t['problema'] or 'Ninguno'}\n  - Recomendación: {t['recomendacion'] or 'No aplica'}")
-
-        cierre = preguntar_a_gpt(f"Se abordaron estos temas: {[t['tema'] for t in temas]}. Con duración total de {duracion} minutos y acuerdos: {acuerdos}. Redacta una conclusión técnica breve para mejorar futuras sesiones ICE. Máximo 3 líneas.")
-        st.success("📌 Conclusión final:")
-        st.markdown(f"**{cierre}**")
-        st.success("Gracias por usar el ChatBOT VDC. Tu sesión ha sido registrada.")
+        with st.expander("\ud83d\udd1d Completar cierre de sesión ICE"):
+            acuerdos_finales = st.text_area("\ud83d\udccd Acuerdos finales")
+            duracion_sesion = st.text_input("\u23f1\ufe0f Duración de la sesión (min)")
+            if st.button("\ud83d\uddc4\ufe0f Finalizar Acta ICE"):
+                st.info("\ud83d\udcca Resumen del acta:")
+                st.markdown(f"- **Proyecto**: {proyecto}\n- **Fecha**: {fecha}\n- **Líder**: {lider}\n- **Tema**: {tema}\n- **Problema**: {problema if problema else 'Sin problema'}\n- **Duración**: {duracion_sesion} min")
+                cierre_ice = f"Tema: {tema}, acuerdos: {acuerdos_finales}. Redacta conclusión técnica breve para mejorar futuras sesiones ICE. Máximo 3 líneas."
+                conclusion = recomendar_gpt(cierre_ice)
+                st.success("\ud83d\udd2c Conclusión final:")
+                st.markdown(f"**{conclusion}**")
+                st.markdown("\n\u2728 Gracias por usar el ChatBOT VDC. ¡Tu revisión colaborativa ha sido registrada!")

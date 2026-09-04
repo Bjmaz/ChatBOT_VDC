@@ -1,143 +1,234 @@
 import streamlit as st
 import openai
+from datetime import datetime
+import pandas as pd
+import json
+from streamlit_gsheets import GSheetsConnection
 
-# Configura tu API Key (se obtiene desde los secrets del deploy)
+# ------------------------------------------------------------------------------
+# CONFIGURACIÓN E INICIALIZACIÓN
+# ------------------------------------------------------------------------------
 openai.api_key = st.secrets["openai_api_key"]
 
-def recomendar_gpt(prompt):
+# Conexión directa a tu hoja de Google Sheets "Base_NCRs"
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+CONTRATISTAS_LISTA = [
+    "OBRA CIVIL", "PINTURA", "PAPEL TAPIZ", "MELAMINE", "LAMINADO/PARQUET", 
+    "ENCHAPE/CERÁMICO", "PUERTAS Y VENTANAS", "MAMPARAS/CRISTALERÍA", 
+    "II.SS (SANITARIAS)", "II.EE (ELÉCTRICAS)", "II.GG (GAS)", 
+    "ALBAÑILERÍA", "GRANITO/MÁRMOL", "DACI/AACI", "TODISTA / CUADRILLA INTERNA"
+]
+
+def procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_res):
+    if tipo_res == "Solución Directa Todista / Criterio de Supervisión":
+        prompt = f"""
+        Analiza la No Conformidad {ncr_num}: '{descripcion}'.
+        Solución mediante acción directa de supervisión o cuadrilla todista.
+        Devuelve un JSON estricto:
+        {{
+            "causa_raiz_analisis": "Análisis breve según criterios de calidad RNE/ISO 9001",
+            "secuencia_propuesta": [
+                {{"paso": 1, "contratista": "TODISTA / CUADRILLA INTERNA", "actividad": "Ejecución de acción correctiva directa o aplicación de sello/saneamiento", "horas": 1}}
+            ]
+        }}
+        """
+    else:
+        prompt = f"""
+        Analiza la No Conformidad {ncr_num}: '{descripcion}'.
+        Causa Raíz Principal: {contratista_causa}.
+        Devuelve un JSON estricto con la secuencia de reingreso de subcontratas e interferencias:
+        {{
+            "causa_raiz_analisis": "Análisis breve de causa raíz bajo ISO 9001/RNE",
+            "secuencia_propuesta": [
+                {{"paso": 1, "contratista": "{contratista_causa}", "actividad": "Desmontaje o retiro de elemento", "horas": 2}},
+                {{"paso": 2, "contratista": "OBRA CIVIL", "actividad": "Resane o alineamiento de base", "horas": 4}},
+                {{"paso": 3, "contratista": "PINTURA", "actividad": "Empaste y pintura de acabado", "horas": 4}},
+                {{"paso": 4, "contratista": "{contratista_causa}", "actividad": "Instalación y montaje final", "horas": 2}}
+            ]
+        }}
+        """
+    
     response = openai.chat.completions.create(
         model="gpt-4-1106-preview",
-        messages=[
-            {"role": "system", "content": "Eres un asistente técnico VDC. Solo respondes cuando se solicita una sugerencia técnica bajo normativa NTP o ISO 9001. Responde de forma clara y breve, máximo 3 líneas."},
-            {"role": "user", "content": prompt}
-        ]
+        response_format={"type": "json_object"},
+        messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
 
-st.set_page_config(page_title="ChatBot VDC - Revisión Técnica", layout="centered")
-st.title("\U0001F9E0 ChatBot VDC - DOSSIER DE CALIDAD")
+st.set_page_config(page_title="ChatBot VDC - Gestión de NCRs", layout="wide")
+st.title("🧠 ChatBot VDC - Gestión e Interferencias de No Conformidades")
 
-formato = st.radio("\U0001F4CC Selecciona un formato:", ["Registrar elementos observados (Formato 1)", "Completar acta de sesión ICE (Formato 2)"])
+formato = st.radio("📌 Selecciona el proceso:", ["Formato 1: Registro e ICE (Oficina)", "Formato 2: Monitoreo en Campo (Tiempo Real)"])
 
-if formato == "Registrar elementos observados (Formato 1)":
-    st.header("Completa la información Técnica del elemento observado")
+# ------------------------------------------------------------------------------
+# FORMATO 1: REGISTRO DE NCR Y PLANIFICACIÓN
+# ------------------------------------------------------------------------------
+if formato == "Formato 1: Registro e ICE (Oficina)":
+    st.header("📋 Formato 1: Registro de NCR y Planificación de Subsanación")
 
-    if "elementos" not in st.session_state:
-        st.session_state.elementos = []
-    if "proyecto" not in st.session_state:
-        st.session_state.proyecto = ""
+    with st.form("form_ncr"):
+        col1, col2, col3 = st.columns([1, 2, 1])
+        ncr_num = col1.text_input("🔢 N° de NCR", value="NCR-040")
+        proyecto = col2.text_input("🏗️ Proyecto", value="Torre C - Edificio Multifamiliar")
+        fecha_reg = col3.date_input("📅 Fecha", datetime.now())
 
-    if not st.session_state.proyecto:
-        st.session_state.proyecto = st.text_input("\U0001F3D7️ Proyecto")
+        descripcion = st.text_area("⚠️ Ubicación y Descripción de la Falla", value="En el piso 6 de la Torre C el papel presenta manchas de lote y variaciones de tono...")
+        
+        col_a, col_b = st.columns(2)
+        contratista_causa = col_a.selectbox("👷 Contratista Causa Raíz Principal", CONTRATISTAS_LISTA, index=2)
+        subcontratista = col_b.text_input("🏢 Empresa Subcontratista / Cuadrilla", value="Konstruct Papel S.A.C.")
 
-    with st.form("form_elemento"):
-        descripcion = st.text_input("\U0001F6E0️ Descripción del elemento")
-        especialidad = st.selectbox("\U0001F58D️ Especialidad", ["", "Arquitectura", "Estructuras", "Eléctricas", "Sanitarias"])
-        enlace = st.selectbox("\U0001F517 Tipo de enlace al modelo", ["", "Autodesk BIM 360 / ACC", "Navisworks", "Revit + Envío local", "QR impreso"])
-        evidencia = st.text_input("\U0001F4CB Tipo de evidencia visual (ej. captura, ficha técnica, otro)")
-        observacion = st.text_area("\u26a0️ Observación técnica detectada")
-        agregar = st.form_submit_button("➕ Agregar elemento")
+        tipo_resolucion = st.radio(
+            "🛠️ Modalidad de Subsanación:",
+            ["Reingreso Interpartidas (Secuencia Lookahead)", "Solución Directa Todista / Criterio de Supervisión"]
+        )
 
-        if agregar and descripcion and especialidad:
-            st.session_state.elementos.append({
-                "descripcion": descripcion,
-                "especialidad": especialidad,
-                "enlace": enlace,
-                "evidencia": evidencia,
-                "observacion": observacion
-            })
-            st.success("Elemento agregado con éxito.")
+        btn_analizar = st.form_submit_button("🔍 Generar Propuesta con ChatBot VDC")
 
-    if st.session_state.elementos:
-        st.subheader("Elementos registrados:")
-        for idx, elem in enumerate(st.session_state.elementos):
-            st.markdown(f"**{idx+1}.** {elem['descripcion']} ({elem['especialidad']})")
+    if btn_analizar and descripcion:
+        with st.spinner("Procesando análisis de restricciones e interferencias con IA..."):
+            res_json = json.loads(procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_resolucion))
+            st.session_state.temp_ncr = {
+                "num": ncr_num, "proyecto": proyecto, "fecha": str(fecha_reg),
+                "descripcion": descripcion, "causa": contratista_causa, "empresa": subcontratista,
+                "tipo_res": tipo_resolucion, "analisis": res_json["causa_raiz_analisis"],
+                "secuencia": res_json["secuencia_propuesta"]
+            }
 
-        if st.button("🔹 Generar recomendaciones"):
-            for idx, elem in enumerate(st.session_state.elementos):
-                if elem['observacion']:
-                    prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Enlace: {elem['enlace']}. Evidencia: {elem['evidencia']}. Observación: {elem['observacion']}. Sugiere una acción correctiva inmediata y una buena práctica futura (máximo 3 líneas, según norma técnica peruana NTP o ISO 9001)."
-                    respuesta = recomendar_gpt(prompt)
-                    st.markdown(f"**Recomendación para elemento {idx+1}:** {respuesta}")
+    if "temp_ncr" in st.session_state:
+        data = st.session_state.temp_ncr
+        st.markdown("---")
+        st.info(f"**Análisis de Causa Raíz (IA):** {data['analisis']}")
+        
+        st.subheader("⏳ Matriz de Subsanación Acordada")
+        df_edit = st.data_editor(
+            pd.DataFrame(data['secuencia']),
+            num_rows="dynamic",
+            column_config={
+                "paso": "Paso",
+                "contratista": st.column_config.SelectboxColumn("Contratista", options=CONTRATISTAS_LISTA),
+                "actividad": "Actividad de Subsanación",
+                "horas": "Horas Estimadas"
+            }
+        )
 
-            st.session_state.generado = True
+        if st.button("💾 Guardar NCR en Google Sheets"):
+            df_bd = conn.read(ttl=0)
+            
+            nueva_fila = pd.DataFrame([{
+                "ncr": data['num'],
+                "proyecto": data['proyecto'],
+                "fecha": data['fecha'],
+                "descripcion": data['descripcion'],
+                "causa_raiz": data['causa'],
+                "empresa": data['empresa'],
+                "tipo_resolucion": data['tipo_res'],
+                "estado_ncr": "Abierta",
+                "plan_json": json.dumps(df_edit.to_dict(orient="records")),
+                "cumplimiento_json": json.dumps(["NO Cumplió"] * len(df_edit)),
+                "observaciones_json": json.dumps(["Pendiente de ejecución"] * len(df_edit)),
+                "acta_cierre": ""
+            }])
+            
+            df_actualizado = pd.concat([df_bd, nueva_fila], ignore_index=True)
+            conn.update(data=df_actualizado)
+            st.success(f"¡{data['num']} guardada con éxito en Google Sheets!")
 
-    if st.session_state.get("generado"):
-        st.header("✅ Información final tras sesión ICE")
-        acuerdos = st.text_area("👍 Acuerdos tomados")
-        estado = st.selectbox("✅ Estado del elemento", ["", "Aprobado", "Observado", "Por Corregir"])
-        duracion = st.text_input("⏱️ Duración total de la sesión ICE (minutos)")
-        responsable = st.text_input("👨‍💼 Responsable de validación")
-        fecha_proxima = st.date_input("🗓️ Fecha de próxima revisión")
+# ------------------------------------------------------------------------------
+# FORMATO 2: SEGUIMIENTO EN CAMPO Y LIBERACIÓN DE SUPERVISIÓN
+# ------------------------------------------------------------------------------
+elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
+    st.header("📱 Formato 2: Checklist de Subsanación y Liberación por Supervisión")
 
-        if st.button("🔹 Generar resumen final y recomendación"):
-            for idx, elem in enumerate(st.session_state.elementos):
-                prompt = f"Elemento: {elem['descripcion']} ({elem['especialidad']}). Observación: {elem['observacion']}. Proyecto: {st.session_state.proyecto}. Sugiere una recomendación breve para debatir en próxima sesión ICE (NTP o ISO9001, máximo 3 líneas)."
-                resultado = recomendar_gpt(prompt)
-                st.markdown(f"**Recomendación final para elemento {idx+1}:** {resultado}")
+    df_bd = conn.read(ttl=0)
+
+    if df_bd.empty or "ncr" not in df_bd.columns or df_bd["ncr"].dropna().empty:
+        st.warning("No hay No Conformidades registradas en la base de datos.")
+    else:
+        lista_ncrs = df_bd["ncr"].dropna().tolist()
+        ncr_sel = st.selectbox("📌 Selecciona la NCR a revisar:", lista_ncrs)
+
+        fila_ncr = df_bd[df_bd["ncr"] == ncr_sel].iloc[0]
+
+        st.markdown(f"**Proyecto:** {fila_ncr['proyecto']} | **Modalidad:** `{fila_ncr['tipo_resolucion']}` | **Estado:** `{fila_ncr['estado_ncr']}`")
+        st.markdown(f"**Ubicación y Falla:** {fila_ncr['descripcion']}")
+        st.markdown("---")
+
+        if fila_ncr['estado_ncr'] == "Levantada":
+            st.success(f"✅ LA {ncr_sel} SE ENCUENTRA COMPLETAMENTE LEVANTADA Y LIBERADA POR SUPERVISIÓN.")
+            st.subheader("📜 Acta de Cierre Técnico y Conformidad")
+            st.info(fila_ncr['acta_cierre'])
+
+        else:
+            plan = json.loads(fila_ncr['plan_json'])
+            estado_pasos = json.loads(fila_ncr['cumplimiento_json'])
+            obs_pasos = json.loads(fila_ncr['observaciones_json'])
+
+            st.subheader("📋 1. Checklist de Ejecución de Contratistas")
+            
+            nuevos_estados = []
+            nuevas_obs = []
+
+            for idx, p in enumerate(plan):
+                col_c1, col_c2, col_c3 = st.columns([2, 2, 3])
+                
+                with col_c1:
+                    estado_previo = estado_pasos[idx] == "Cumplió"
+                    chk = st.checkbox(f"Paso {p['paso']}: {p['contratista']}", value=estado_previo, key=f"chk_{ncr_sel}_{idx}")
+                    nuevos_estados.append("Cumplió" if chk else "NO Cumplió")
+
+                with col_c2:
+                    st.write(f"**Actividad:** {p['actividad']} ({p['horas']}h)")
+
+                with col_c3:
+                    val_obs = obs_pasos[idx] if idx < len(obs_pasos) else ""
+                    txt_obs = st.text_input(f"Observación Paso {p['paso']}", value=val_obs, key=f"txt_{ncr_sel}_{idx}")
+                    nuevas_obs.append(txt_obs)
 
             st.markdown("---")
-            st.subheader("🔢 Resumen final ingresado por el usuario")
-            st.markdown(f"**Proyecto:** {st.session_state.proyecto}")
-            st.markdown(f"**Duración:** {duracion} minutos")
-            st.markdown(f"**Responsable validación:** {responsable}")
-            st.markdown(f"**Fecha próxima revisión:** {fecha_proxima}")
-            st.markdown(f"**Estado del elemento:** {estado}")
-            st.markdown(f"**Acuerdos:** {acuerdos}")
-            st.success("Gracias por usar el ChatBOT VDC. Nos vemos en la siguiente revisión del Formato 2.")
+            
+            if st.button("🔄 Guardar Avance de Ejecución"):
+                idx_fila = df_bd[df_bd["ncr"] == ncr_sel].index[0]
+                df_bd.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados)
+                df_bd.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs)
+                conn.update(data=df_bd)
+                st.success("Avances guardados en Google Sheets.")
+                st.rerun()
 
-elif formato == "Completar acta de sesión ICE (Formato 2)":
-    st.header("📄 Completar acta de sesión ICE Técnica")
+            todos_ejecutados = all(e == "Cumplió" for e in nuevos_estados)
 
-    if "temas" not in st.session_state:
-        st.session_state.temas = []
+            if todos_ejecutados:
+                st.subheader("🕵️‍♂️ 2. Inspección y Liberación por Supervisión de Calidad")
+                st.info("Todos los contratistas registraron el cumplimiento de sus actividades. Ingrese el dictamen de calidad para el cierre formal.")
 
-    proyecto = st.text_input("🛠 Proyecto")
-    fecha = st.date_input("📅 Fecha de sesión")
-    lider = st.text_input("🧑‍💼 Líder de sesión")
-    participantes = st.text_area("👥 Participantes")
+                col_sup1, col_sup2 = st.columns(2)
+                supervisor = col_sup1.text_input("👤 Nombre del Inspector / Supervisor de Calidad", value="Ing. de Calidad")
+                dictamen = col_sup2.radio("📌 Dictamen Final de Campo:", ["APROBADO (Aplica Cierre)", "RECHAZADO / CON OBSERVACIONES"])
+                
+                obs_supervision = st.text_area("💬 Comentarios/Observaciones de la Inspección de Calidad", value="Trabajos de subsanación verificados e inspeccionados en sitio. Cumplen con los criterios de calidad.")
 
-    with st.form("form_tema"):
-        tema = st.text_input("📂 Tema abordado")
-        problema = st.text_area("⚠️ Problema abordado (dejar vacío si no hubo)")
-        agregar_tema = st.form_submit_button("➕ Agregar tema")
+                if st.button("🔒 Confirmar Inspección y Emitir Cierre por ChatBot VDC"):
+                    idx_fila = df_bd[df_bd["ncr"] == ncr_sel].index[0]
+                    
+                    if dictamen == "APROBADO (Aplica Cierre)":
+                        prompt_cierre = f"""
+                        La NCR {ncr_sel} ({fila_ncr['descripcion']}) fue ejecutada por las contratas y APROBADA en campo por la Supervisión ({supervisor}).
+                        Observaciones del supervisor: '{obs_supervision}'.
+                        Redacta una conclusión técnica final de 3 líneas declarando la liberación definitiva de la restricción bajo norma ISO 9001.
+                        """
+                        resp_cierre = openai.chat.completions.create(
+                            model="gpt-4-1106-preview",
+                            messages=[{"role": "user", "content": prompt_cierre}]
+                        ).choices[0].message.content
 
-        if agregar_tema and tema:
-            st.session_state.temas.append({"tema": tema, "problema": problema})
-            st.success("Tema agregado correctamente.")
+                        df_bd.at[idx_fila, "estado_ncr"] = "Levantada"
+                        df_bd.at[idx_fila, "acta_cierre"] = f"Aprobado por {supervisor}. {resp_cierre}"
+                        st.balloons()
+                        st.success(f"🎉 ¡{ncr_sel} Liberada y Cerrada Definitivamente por Calidad!")
+                    else:
+                        st.warning("⚠️ La NCR no fue aprobada por Supervisión. Se requiere subsanar las observaciones indicadas.")
+                        df_bd.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs + [f"Rechazado por Supervisión: {obs_supervision}"])
 
-    if st.session_state.temas:
-        st.subheader("Temas registrados:")
-        for idx, t in enumerate(st.session_state.temas):
-            st.markdown(f"**{idx+1}.** {t['tema']}")
-
-        if st.button("💡 Generar recomendaciones por tema"):
-            for idx, t in enumerate(st.session_state.temas):
-                if t['problema']:
-                    prompt = f"Tema: {t['tema']}. Problema: {t['problema']}. Sugiere una acción inmediata o recomendación corta según norma peruana NTP o ISO 9001 (3 líneas máximo)."
-                    respuesta = recomendar_gpt(prompt)
-                    st.markdown(f"**Recomendación técnica para tema {idx+1}:** {respuesta}")
-
-            st.session_state.temas_generados = True
-
-    if st.session_state.get("temas_generados"):
-        st.subheader("✅ Finaliza el acta técnica")
-        acuerdos_ice = st.text_area("🤝 Acuerdos finales en sesión ICE")
-        duracion = st.text_input("⏱️ Duración total de la sesión ICE (minutos)")
-        responsable = st.text_input("👤 Responsable de validación")
-
-        if st.button("📄 Generar conclusión final"):
-            resumen = ", ".join([f"{t['tema']} - {t['problema']}" for t in st.session_state.temas])
-            prompt = f"Proyecto: {proyecto}. Temas: {resumen}. Acuerdos: {acuerdos_ice}. Duración: {duracion}. Sugiere una conclusión final para mejorar futuras sesiones ICE."
-            final = recomendar_gpt(prompt)
-            st.markdown(f"**Conclusión técnica:** {final}")
-
-            st.markdown("---")
-            st.subheader("🧾 Resumen final del usuario")
-            st.markdown(f"**Proyecto:** {proyecto}")
-            st.markdown(f"**Fecha:** {fecha}")
-            st.markdown(f"**Participantes:** {participantes}")
-            st.markdown(f"**Acuerdos:** {acuerdos_ice}")
-            st.markdown(f"**Duración:** {duracion} minutos")
-            st.markdown(f"**Validado por:** {responsable}")
-            st.success("Gracias por usar el ChatBOT VDC. Tu sesión ICE ha sido registrada con éxito.")
+                    conn.update(data=df_bd)
+                    st.rerun()

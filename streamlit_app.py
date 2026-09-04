@@ -69,15 +69,19 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
 
     with st.form("form_ncr"):
         col1, col2, col3 = st.columns([1, 2, 1])
-        ncr_num = col1.text_input("🔢 N° de NCR", value="NCR-040")
-        proyecto = col2.text_input("🏗️ Proyecto", value="Torre C - Edificio Multifamiliar")
+        ncr_num = col1.text_input("🔢 N° de NCR", value="", placeholder="Ej: NCR-001")
+        proyecto = col2.text_input("🏗️ Proyecto", value="", placeholder="Ej: Torre C - Edificio Multifamiliar")
         fecha_reg = col3.date_input("📅 Fecha", datetime.now())
 
-        descripcion = st.text_area("⚠️ Ubicación y Descripción de la Falla", value="En el piso 6 de la Torre C el papel presenta manchas de lote y variaciones de tono...")
+        descripcion = st.text_area(
+            "⚠️ Ubicación y Descripción de la Falla", 
+            value="", 
+            placeholder="Ingrese la ubicación exacta (piso, ambiente, eje) y detalle la observación técnica..."
+        )
         
         col_a, col_b = st.columns(2)
-        contratista_causa = col_a.selectbox("👷 Contratista Causa Raíz Principal", CONTRATISTAS_LISTA, index=2)
-        subcontratista = col_b.text_input("🏢 Empresa Subcontratista / Cuadrilla", value="Konstruct Papel S.A.C.")
+        contratista_causa = col_a.selectbox("👷 Contratista Causa Raíz Principal", CONTRATISTAS_LISTA, index=0)
+        subcontratista = col_b.text_input("🏢 Empresa Subcontratista / Cuadrilla", value="", placeholder="Nombre de la empresa responsable")
 
         tipo_resolucion = st.radio(
             "🛠️ Modalidad de Subsanación:",
@@ -86,7 +90,7 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
 
         btn_analizar = st.form_submit_button("🔍 Generar Propuesta con ChatBot VDC")
 
-    if btn_analizar and descripcion:
+    if btn_analizar and descripcion and ncr_num:
         with st.spinner("Procesando análisis de restricciones e interferencias con IA..."):
             res_json = json.loads(procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_resolucion))
             st.session_state.temp_ncr = {
@@ -95,6 +99,8 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
                 "tipo_res": tipo_resolucion, "analisis": res_json["causa_raiz_analisis"],
                 "secuencia": res_json["secuencia_propuesta"]
             }
+    elif btn_analizar:
+        st.warning("Por favor ingrese el N° de NCR y la descripción antes de generar el análisis.")
 
     if "temp_ncr" in st.session_state:
         data = st.session_state.temp_ncr
@@ -203,10 +209,10 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                 st.info("Todos los contratistas registraron el cumplimiento de sus actividades. Ingrese el dictamen de calidad para el cierre formal.")
 
                 col_sup1, col_sup2 = st.columns(2)
-                supervisor = col_sup1.text_input("👤 Nombre del Inspector / Supervisor de Calidad", value="Ing. de Calidad")
+                supervisor = col_sup1.text_input("👤 Nombre del Inspector / Supervisor de Calidad", value="", placeholder="Ej: Ing. Luis Matos")
                 dictamen = col_sup2.radio("📌 Dictamen Final de Campo:", ["APROBADO (Aplica Cierre)", "RECHAZADO / CON OBSERVACIONES"])
                 
-                obs_supervision = st.text_area("💬 Comentarios/Observaciones de la Inspección de Calidad", value="Trabajos de subsanación verificados e inspeccionados en sitio. Cumplen con los criterios de calidad.")
+                obs_supervision = st.text_area("💬 Comentarios/Observaciones de la Inspección de Calidad", value="", placeholder="Detalle las observaciones de la verificación en sitio...")
 
                 if st.button("🔒 Confirmar Inspección y Emitir Cierre por ChatBot VDC"):
                     idx_fila = df_bd[df_bd["ncr"] == ncr_sel].index[0]

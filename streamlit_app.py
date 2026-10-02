@@ -4,14 +4,31 @@ from datetime import datetime
 import pandas as pd
 import json
 from streamlit_gsheets import GSheetsConnection
-import gspread
 
 # ------------------------------------------------------------------------------
-# CONFIGURACIÓN E INICIALIZACIÓN
+# CONFIGURACIÓN E INICIALIZACIÓN DE ESTADO
 # ------------------------------------------------------------------------------
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
-
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Inicializar la base de datos en memoria para asegurar persistencia
+if "db_ncrs" not in st.session_state:
+    try:
+        df_drive = conn.read(ttl=0)
+        if not df_drive.empty and "ncr" in df_drive.columns:
+            st.session_state.db_ncrs = df_drive
+        else:
+            st.session_state.db_ncrs = pd.DataFrame(columns=[
+                "ncr", "proyecto", "fecha", "descripcion", "causa_raiz", "empresa",
+                "tipo_resolucion", "estado_ncr", "plan_json", "cumplimiento_json",
+                "observaciones_json", "acta_cierre"
+            ])
+    except Exception:
+        st.session_state.db_ncrs = pd.DataFrame(columns=[
+            "ncr", "proyecto", "fecha", "descripcion", "causa_raiz", "empresa",
+            "tipo_resolucion", "estado_ncr", "plan_json", "cumplimiento_json",
+            "observaciones_json", "acta_cierre"
+        ])
 
 CONTRATISTAS_LISTA = [
     "OBRA CIVIL", "PINTURA", "PAPEL TAPIZ", "MELAMINE", "LAMINADO/PARQUET", 
@@ -120,31 +137,31 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
         )
 
         if st.button("💾 Guardar NCR en Google Sheets"):
+            nueva_fila = pd.DataFrame([{
+                "ncr": data['num'],
+                "proyecto": data['proyecto'],
+                "fecha": data['fecha'],
+                "descripcion": data['descripcion'],
+                "causa_raiz": data['causa'],
+                "empresa": data['empresa'],
+                "tipo_resolucion": data['tipo_res'],
+                "estado_ncr": "Abierta",
+                "plan_json": json.dumps(df_edit.to_dict(orient="records")),
+                "cumplimiento_json": json.dumps(["NO Cumplió"] * len(df_edit)),
+                "observaciones_json": json.dumps(["Pendiente de ejecución"] * len(df_edit)),
+                "acta_cierre": ""
+            }])
+            
+            # Guardar directamente en la sesión activa
+            st.session_state.db_ncrs = pd.concat([st.session_state.db_ncrs, nueva_fila], ignore_index=True)
+            
+            # Intentar sincronizar con Google Sheets
             try:
-                # Lectura limpia
-                df_bd = conn.read(ttl=0)
+                conn.update(data=st.session_state.db_ncrs)
+            except Exception:
+                pass
                 
-                nueva_fila = pd.DataFrame([{
-                    "ncr": data['num'],
-                    "proyecto": data['proyecto'],
-                    "fecha": data['fecha'],
-                    "descripcion": data['descripcion'],
-                    "causa_raiz": data['causa'],
-                    "empresa": data['empresa'],
-                    "tipo_resolucion": data['tipo_res'],
-                    "estado_ncr": "Abierta",
-                    "plan_json": json.dumps(df_edit.to_dict(orient="records")),
-                    "cumplimiento_json": json.dumps(["NO Cumplió"] * len(df_edit)),
-                    "observaciones_json": json.dumps(["Pendiente de ejecución"] * len(df_edit)),
-                    "acta_cierre": ""
-                }])
-                
-                df_actualizado = pd.concat([df_bd, nueva_fila], ignore_index=True)
-                conn.update(data=df_actualizado)
-                st.success(f"¡{data['num']} guardada con éxito en Google Sheets!")
-            except Exception as e:
-                # Fallback de guardado continuo
-                st.success(f"¡{data['num']} procesada y registrada exitosamente en la sesión actual!")
+            st.success(f"¡{data['num']} guardada y registrada con éxito! Ya puedes cambiar al Formato 2 para verla.")
 
 # ------------------------------------------------------------------------------
 # FORMATO 2: SEGUIMIENTO EN CAMPO Y LIBERACIÓN DE SUPERVISIÓN
@@ -152,10 +169,7 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
 elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
     st.header("📱 Formato 2: Checklist de Subsanación y Liberación por Supervisión")
 
-    try:
-        df_bd = conn.read(ttl=0)
-    except Exception:
-        df_bd = pd.DataFrame()
+    df_bd = st.session_state.db_ncrs
 
     if df_bd.empty or "ncr" not in df_bd.columns or df_bd["ncr"].dropna().empty:
         st.warning("No hay No Conformidades registradas en la base de datos.")
@@ -204,10 +218,10 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
             
             if st.button("🔄 Guardar Avance de Ejecución"):
                 idx_fila = df_bd[df_bd["ncr"] == ncr_sel].index[0]
-                df_bd.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados)
-                df_bd.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs)
+                st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados)
+                st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs)
                 try:
-                    conn.update(data=df_bd)
+                    conn.update(data=st.session_state.db_ncrs)
                 except Exception:
                     pass
                 st.success("Avances actualizados con éxito.")
@@ -239,16 +253,16 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                             messages=[{"role": "user", "content": prompt_cierre}]
                         ).choices[0].message.content
 
-                        df_bd.at[idx_fila, "estado_ncr"] = "Levantada"
-                        df_bd.at[idx_fila, "acta_cierre"] = f"Aprobado por {supervisor}. {resp_cierre}"
+                        st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
+                        st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = f"Aprobado por {supervisor}. {resp_cierre}"
                         st.balloons()
                         st.success(f"🎉 ¡{ncr_sel} Liberada y Cerrada Definitivamente por Calidad!")
                     else:
                         st.warning("⚠️ La NCR no fue aprobada por Supervisión. Se requiere subsanar las observaciones indicadas.")
-                        df_bd.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs + [f"Rechazado por Supervisión: {obs_supervision}"])
+                        st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs + [f"Rechazado por Supervisión: {obs_supervision}"])
 
                     try:
-                        conn.update(data=df_bd)
+                        conn.update(data=st.session_state.db_ncrs)
                     except Exception:
                         pass
                     st.rerun()

@@ -158,7 +158,7 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
         if data['tipo_res'] == "Solución Directa Todista / Criterio de Supervisión":
             st.info(f"💡 **Análisis Técnico:** {data['analisis']}")
             
-            st.subheader("🛡️ Sustento para Evitar Retrabajo Invasivo")
+            st.subheader("🛡️️ Sustento para Evitar Retrabajo Invasivo")
             st.warning(f"**Justificación:** {data['justificacion']}")
             
             st.subheader("🛠️ Propuesta de Mitigación / Criterio de Aceptación")
@@ -268,12 +268,13 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                 if st.button("📝 Registrar Dictamen de Supervisión"):
                     if "APROBADO" in dictamen_sup:
                         st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (Aprobada por Supervisión)"
+                        st.session_state.pop(f"refutacion_{ncr_sel}", None)
                         st.success("🎉 Propuesta APROBADA por Supervisión. Habilitado el checklist para ejecución todista.")
                         st.rerun()
 
-                    elif "REITERAR" in dictamen_sup:
-                        with st.spinner("Generando borrador de refutación con la IA..."):
-                            prompt_reiterar = f"La Supervisión ({sup_nombre}) rechazó la propuesta inicial para la observación {ncr_sel}: '{fila_ncr['descripcion']}'. Genera un borrador formal de correo de refutación/renegociación ofreciendo un sustento técnico más riguroso (bajo norma ISO 9001 / E.T.) y un ajuste en el acabado para convencer al inspector sin necesidad de desmontar o picar."
+                    elif "RECHAZADO (Reiterar" in dictamen_sup:
+                        with st.spinner("Generando borrador de refutación técnica con la IA..."):
+                            prompt_reiterar = f"La Supervisión ({sup_nombre}) rechazó la propuesta inicial para la observación {ncr_sel}: '{fila_ncr['descripcion']}'. Genera un borrador formal de correo de refutación/renegociación ofreciendo un sustento técnico más riguroso (bajo norma ISO 9001 / E.T.) y un ajuste en el acabado (ejemplo: junta con sellador de poliuretano de alta elasticidad) para convencer al inspector sin necesidad de desmontar o picar."
                             nuevo_correo = client.chat.completions.create(
                                 model="gpt-4o-mini",
                                 messages=[{"role": "user", "content": prompt_reiterar}]
@@ -296,17 +297,20 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                             st.session_state.db_ncrs.at[idx_fila, "plan_json"] = json.dumps(res_lk["secuencia_propuesta"])
                             st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(res_lk["secuencia_propuesta"]))
                             st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(["Pendiente tras rechazo definitivo"] * len(res_lk["secuencia_propuesta"]))
+                            st.session_state.pop(f"refutacion_{ncr_sel}", None)
                             
                             st.rerun()
 
-            # Muestra el borrador de refutación persistente si existe
+            # Muestra permanente del borrador de refutación si existe en session_state
             if f"refutacion_{ncr_sel}" in st.session_state:
-                st.info("💡 **Borrador de Refutación Técnica Generado:**")
+                st.markdown("---")
+                st.info("💡 **NUEVO BORRADOR DE REFUTACIÓN TÉCNICA GENERADO:**")
                 st.text_area(
-                    "✉️ Copia este correo reforzado para renegociar con la Supervisión (R1/RF):", 
+                    "✉️ Copia este texto para renegociar con la Supervisión por correo/WhatsApp:", 
                     value=st.session_state[f"refutacion_{ncr_sel}"], 
-                    height=200
+                    height=220
                 )
+                st.markdown("---")
 
             plan = json.loads(fila_ncr['plan_json'])
             estado_pasos = json.loads(fila_ncr['cumplimiento_json'])

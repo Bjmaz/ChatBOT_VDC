@@ -37,7 +37,11 @@ CONTRATISTAS_LISTA = [
 ]
 
 def procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_res, fecha_inicio_str, observacion_previa=""):
-    fecha_base = datetime.strptime(fecha_inicio_str, "%Y-%m-%d")
+    try:
+        fecha_base = datetime.strptime(str(fecha_inicio_str), "%Y-%m-%d")
+    except Exception:
+        fecha_base = datetime.now()
+        
     f_p1 = (fecha_base + timedelta(days=0)).strftime("%Y-%m-%d")
     f_p2 = (fecha_base + timedelta(days=1)).strftime("%Y-%m-%d")
     f_p4 = (fecha_base + timedelta(days=2)).strftime("%Y-%m-%d")
@@ -169,8 +173,14 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
             st.info(f"**Análisis de Causa Raíz (IA):** {data['analisis']}")
 
         st.subheader("⏳ Matriz de Subsanación Programada")
+        
+        # Preparación de datos para evitar fallos de formato de fecha en Streamlit
+        df_secuencia = pd.DataFrame(data['secuencia'])
+        if "fecha_prog" in df_secuencia.columns:
+            df_secuencia["fecha_prog"] = pd.to_datetime(df_secuencia["fecha_prog"]).dt.date
+
         df_edit = st.data_editor(
-            pd.DataFrame(data['secuencia']),
+            df_secuencia,
             num_rows="dynamic",
             column_config={
                 "paso": st.column_config.NumberColumn("Paso", disabled=False),
@@ -185,6 +195,11 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
         if st.button("💾 Guardar NCR en Google Sheets"):
             estado_ini = "Pendiente Validación Supervisión" if data['tipo_res'] == "Solución Directa Todista / Criterio de Supervisión" else "Abierta"
             
+            # Formatear la matriz a diccionarios convertibles a JSON con fechas legibles
+            df_guardar = df_edit.copy()
+            if "fecha_prog" in df_guardar.columns:
+                df_guardar["fecha_prog"] = df_guardar["fecha_prog"].astype(str)
+
             nueva_fila = pd.DataFrame([{
                 "ncr": data['num'],
                 "proyecto": data['proyecto'],
@@ -194,9 +209,9 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
                 "empresa": data['empresa'],
                 "tipo_resolucion": data['tipo_res'],
                 "estado_ncr": estado_ini,
-                "plan_json": json.dumps(df_edit.to_dict(orient="records")),
-                "cumplimiento_json": json.dumps(["NO Cumplió"] * len(df_edit)),
-                "observaciones_json": json.dumps(["Pendiente de validación/ejecución"] * len(df_edit)),
+                "plan_json": json.dumps(df_guardar.to_dict(orient="records")),
+                "cumplimiento_json": json.dumps(["NO Cumplió"] * len(df_guardar)),
+                "observaciones_json": json.dumps(["Pendiente de validación/ejecución"] * len(df_guardar)),
                 "acta_cierre": ""
             }])
             
@@ -207,7 +222,7 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
             except Exception:
                 pass
                 
-            st.success(f"¡{data['num']} guardada con éxito! Estado: `{estado_ini}`.")
+            st.success(f"¡{data['num']} guardada con éxito! Estado: `{estado_ini}`. Puedes revisarla en el Formato 2.")
 
 # ------------------------------------------------------------------------------
 # FORMATO 2: SEGUIMIENTO EN CAMPO Y LIBERACIÓN DE SUPERVISIÓN
@@ -247,7 +262,7 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                     "📌 Respuesta / Dictamen de la Supervisión:", 
                     [
                         "✅ APROBADO (Ejecutar propuesta ligera con Todistas)",
-                        "🔁 RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
+                        "2. RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
                         "🚨 RECHAZADO DEFINITIVO (Asumir cambio y reconstruir en cadena)"
                     ]
                 )
@@ -260,7 +275,7 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
 
                     elif "REITERAR" in dictamen_sup:
                         st.info("Generando nuevo borrador de respuesta técnica con la IA...")
-                        prompt_reiterar = f"La Supervisión rechazó la propuesta inicial para {ncr_sel} ({fila_ncr['descripcion']}). Genera un borrador de correo con un sustento de calidad más riguroso bajo norma ISO 9001/E.T. proponiendo un sellado/acabado reforzado para convencer al inspector {sup_nombre}."
+                        prompt_reiterar = f"La Supervisión rechazó la propuesta inicial para {ncr_sel} ({fila_ncr['descripcion']}). Genera un borrador de correo con un sustento de calidad más riguroso bajo norma ISO 9001/E.T. proponiendo un sellado/acabado reinforced para convencer al inspector {sup_nombre}."
                         nuevo_correo = client.chat.completions.create(
                             model="gpt-4o-mini",
                             messages=[{"role": "user", "content": prompt_reiterar}]
@@ -352,7 +367,7 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                         st.balloons()
                         st.success(f"🎉 ¡{ncr_sel} Liberada y Cerrada Definitivamente por Calidad!")
                     else:
-                        st.warning("⚠️ La NCR no fue aprobada por Supervisión. Se requiere corregir las observaciones.")
+                        st.warning("⚠️️ La NCR no fue aprobada por Supervisión. Se requiere corregir las observaciones.")
                         st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs + [f"Rechazado por Supervisión: {obs_supervision}"])
 
                     try:

@@ -174,7 +174,6 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
 
         st.subheader("⏳ Matriz de Subsanación Programada")
         
-        # Preparación de datos para evitar fallos de formato de fecha en Streamlit
         df_secuencia = pd.DataFrame(data['secuencia'])
         if "fecha_prog" in df_secuencia.columns:
             df_secuencia["fecha_prog"] = pd.to_datetime(df_secuencia["fecha_prog"]).dt.date
@@ -195,7 +194,6 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
         if st.button("💾 Guardar NCR en Google Sheets"):
             estado_ini = "Pendiente Validación Supervisión" if data['tipo_res'] == "Solución Directa Todista / Criterio de Supervisión" else "Abierta"
             
-            # Formatear la matriz a diccionarios convertibles a JSON con fechas legibles
             df_guardar = df_edit.copy()
             if "fecha_prog" in df_guardar.columns:
                 df_guardar["fecha_prog"] = df_guardar["fecha_prog"].astype(str)
@@ -274,31 +272,41 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                         st.rerun()
 
                     elif "REITERAR" in dictamen_sup:
-                        st.info("Generando nuevo borrador de respuesta técnica con la IA...")
-                        prompt_reiterar = f"La Supervisión rechazó la propuesta inicial para {ncr_sel} ({fila_ncr['descripcion']}). Genera un borrador de correo con un sustento de calidad más riguroso bajo norma ISO 9001/E.T. proponiendo un sellado/acabado reinforced para convencer al inspector {sup_nombre}."
-                        nuevo_correo = client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            messages=[{"role": "user", "content": prompt_reiterar}]
-                        ).choices[0].message.content
-                        st.text_area("✉️ Nuevo borrador para renegociar con la Supervisión:", value=nuevo_correo, height=180)
+                        with st.spinner("Generando borrador de refutación con la IA..."):
+                            prompt_reiterar = f"La Supervisión ({sup_nombre}) rechazó la propuesta inicial para la observación {ncr_sel}: '{fila_ncr['descripcion']}'. Genera un borrador formal de correo de refutación/renegociación ofreciendo un sustento técnico más riguroso (bajo norma ISO 9001 / E.T.) y un ajuste en el acabado para convencer al inspector sin necesidad de desmontar o picar."
+                            nuevo_correo = client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt_reiterar}]
+                            ).choices[0].message.content
+                            
+                            st.session_state[f"refutacion_{ncr_sel}"] = nuevo_correo
+                            st.rerun()
 
                     elif "RECHAZADO DEFINITIVO" in dictamen_sup:
-                        st.error("⚠️ La Supervisión exigió reconstrucción total. Convirtiendo a Secuencia Lookahead...")
-                        prompt_lookahead = f"Analiza {ncr_sel}: {fila_ncr['descripcion']}. Causa raíz: {fila_ncr['causa_raiz']}. Genera la secuencia estricta Lookahead de reingreso de subcontratas (desmontar, resanar, pintar, re-instalar) en JSON estricto: {{\"secuencia_propuesta\": [ {{\"paso\": 1, \"fecha_prog\": \"{str(datetime.now().date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Desmontaje o retiro de elemento defectuoso\", \"horas\": 2}}, {{\"paso\": 2, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=1)).date())}\", \"contratista\": \"OBRA CIVIL\", \"actividad\": \"Resane y alineamiento de base\", \"horas\": 4}}, {{\"paso\": 3, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=2)).date())}\", \"contratista\": \"PINTURA\", \"actividad\": \"Empaste y pintura de acabado\", \"horas\": 4}}, {{\"paso\": 4, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=3)).date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Instalación y montaje final\", \"horas\": 2}} ]}}"
-                        res_lk = json.loads(client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            response_format={"type": "json_object"},
-                            messages=[{"role": "user", "content": prompt_lookahead}]
-                        ).choices[0].message.content)
+                        with st.spinner("Transformando a Secuencia Lookahead..."):
+                            prompt_lookahead = f"Analiza {ncr_sel}: {fila_ncr['descripcion']}. Causa raíz: {fila_ncr['causa_raiz']}. Genera la secuencia estricta Lookahead de reingreso de subcontratas (desmontar, resanar, pintar, re-instalar) en JSON estricto: {{\"secuencia_propuesta\": [ {{\"paso\": 1, \"fecha_prog\": \"{str(datetime.now().date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Desmontaje o retiro de elemento defectuoso\", \"horas\": 2}}, {{\"paso\": 2, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=1)).date())}\", \"contratista\": \"OBRA CIVIL\", \"actividad\": \"Resane y alineamiento de base\", \"horas\": 4}}, {{\"paso\": 3, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=2)).date())}\", \"contratista\": \"PINTURA\", \"actividad\": \"Empaste y pintura de acabado\", \"horas\": 4}}, {{\"paso\": 4, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=3)).date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Instalación y montaje final\", \"horas\": 2}} ]}}"
+                            res_lk = json.loads(client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                response_format={"type": "json_object"},
+                                messages=[{"role": "user", "content": prompt_lookahead}]
+                            ).choices[0].message.content)
 
-                        st.session_state.db_ncrs.at[idx_fila, "tipo_resolucion"] = "Reingreso Interpartidas (Secuencia Lookahead)"
-                        st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta"
-                        st.session_state.db_ncrs.at[idx_fila, "plan_json"] = json.dumps(res_lk["secuencia_propuesta"])
-                        st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(res_lk["secuencia_propuesta"]))
-                        st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(["Pendiente tras rechazo definitivo"] * len(res_lk["secuencia_propuesta"]))
-                        
-                        st.warning("🔄 ¡NCR transformada exitosamente a Secuencia Lookahead! Ahora incluye los pasos para todas las subcontratas.")
-                        st.rerun()
+                            st.session_state.db_ncrs.at[idx_fila, "tipo_resolucion"] = "Reingreso Interpartidas (Secuencia Lookahead)"
+                            st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta"
+                            st.session_state.db_ncrs.at[idx_fila, "plan_json"] = json.dumps(res_lk["secuencia_propuesta"])
+                            st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(res_lk["secuencia_propuesta"]))
+                            st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(["Pendiente tras rechazo definitivo"] * len(res_lk["secuencia_propuesta"]))
+                            
+                            st.rerun()
+
+            # Muestra el borrador de refutación persistente si existe
+            if f"refutacion_{ncr_sel}" in st.session_state:
+                st.info("💡 **Borrador de Refutación Técnica Generado:**")
+                st.text_area(
+                    "✉️ Copia este correo reforzado para renegociar con la Supervisión (R1/RF):", 
+                    value=st.session_state[f"refutacion_{ncr_sel}"], 
+                    height=200
+                )
 
             plan = json.loads(fila_ncr['plan_json'])
             estado_pasos = json.loads(fila_ncr['cumplimiento_json'])
@@ -367,7 +375,7 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                         st.balloons()
                         st.success(f"🎉 ¡{ncr_sel} Liberada y Cerrada Definitivamente por Calidad!")
                     else:
-                        st.warning("⚠️️ La NCR no fue aprobada por Supervisión. Se requiere corregir las observaciones.")
+                        st.warning("⚠️ La NCR no fue aprobada por Supervisión. Se requiere corregir las observaciones.")
                         st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs + [f"Rechazado por Supervisión: {obs_supervision}"])
 
                     try:

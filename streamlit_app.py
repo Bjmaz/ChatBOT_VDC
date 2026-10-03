@@ -261,16 +261,15 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                     [
                         "✅ APROBADO (Ejecutar propuesta ligera con Todistas)",
                         "2. RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
-                        "🚨 RECHAZADO DEFINITIVO (Asumir cambio y reconstruir en cadena)"
+                        "🚨 RECHAZADO DEFINITIVO (Asumir reconstrucción total con Lookahead)"
                     ]
                 )
                 
-                # Campo condicional para escribir la objeción del inspector
                 objecion_inspector = ""
-                if "RECHAZADO (Reiterar" in dictamen_sup:
+                if "RECHAZADO" in dictamen_sup:
                     objecion_inspector = st.text_area(
-                        "🗣️ Copia/Escribe el motivo del rechazo u objeción del Inspector:",
-                        placeholder="Ejemplo: El inspector indica que el sellador se va a desprender con la limpieza de la cocina y exige una solución impermeable fija."
+                        "🗣️ Copia/Escribe la razón o motivo del rechazo del Inspector:",
+                        placeholder="Ejemplo: Exige nivelar el suelo o contrapiso porque el mueble está desfasado respecto al nivel terminado."
                     )
 
                 if st.button("📝 Registrar Dictamen de Supervisión"):
@@ -282,15 +281,15 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
 
                     elif "RECHAZADO (Reiterar" in dictamen_sup:
                         if not objecion_inspector:
-                            st.warning("Por favor ingrese el motivo u objeción del inspector para formular la refutación técnica.")
+                            st.warning("Por favor ingrese la objeción del inspector para redactar la refutación.")
                         else:
                             with st.spinner("Generando borrador de refutación enfocado en rebatir la objeción del inspector..."):
                                 prompt_reiterar = f"""
                                 La Supervisión ({sup_nombre}) rechazó la propuesta inicial para {ncr_sel}: '{fila_ncr['descripcion']}'.
-                                Objeción específica expresada por el Inspector: '{objecion_inspector}'.
+                                Objeción expresada por el Inspector: '{objecion_inspector}'.
 
-                                Genera un correo de refutación técnica formal respondiendo Y REBATIENDO punto por punto la objeción del inspector '{objecion_inspector}'.
-                                Sustenta la respuesta usando criterios de calidad (ISO 9001 / Especificaciones Técnicas / durabilidad / elasticidad) y propone un ajuste técnico mejorado (ej. sellador de poliuretano hibrido monocomponente de alto módulo o perfil de remate) para convencer al inspector sin necesidad de desmontar ni picar.
+                                Genera un correo de refutación técnica formal respondiendo Y REBATIENDO la objeción '{objecion_inspector}'.
+                                Sustenta la respuesta usando criterios de calidad (ISO 9001 / E.T.) y propone un ajuste técnico mejorado para convencer al inspector sin necesidad de desmontar o picar.
                                 """
                                 nuevo_correo = client.chat.completions.create(
                                     model="gpt-4o-mini",
@@ -301,31 +300,58 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                                 st.rerun()
 
                     elif "RECHAZADO DEFINITIVO" in dictamen_sup:
-                        with st.spinner("Transformando a Secuencia Lookahead..."):
-                            prompt_lookahead = f"Analiza {ncr_sel}: {fila_ncr['descripcion']}. Causa raíz: {fila_ncr['causa_raiz']}. Genera la secuencia estricta Lookahead de reingreso de subcontratas (desmontar, resanar, pintar, re-instalar) en JSON estricto: {{\"secuencia_propuesta\": [ {{\"paso\": 1, \"fecha_prog\": \"{str(datetime.now().date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Desmontaje o retiro de elemento defectuoso\", \"horas\": 2}}, {{\"paso\": 2, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=1)).date())}\", \"contratista\": \"OBRA CIVIL\", \"actividad\": \"Resane y alineamiento de base\", \"horas\": 4}}, {{\"paso\": 3, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=2)).date())}\", \"contratista\": \"PINTURA\", \"actividad\": \"Empaste y pintura de acabado\", \"horas\": 4}}, {{\"paso\": 4, \"fecha_prog\": \"{str((datetime.now() + timedelta(days=3)).date())}\", \"contratista\": \"{fila_ncr['causa_raiz']}\", \"actividad\": \"Instalación y montaje final\", \"horas\": 2}} ]}}"
+                        with st.spinner("🧠 Generando secuencia Lookahead ingenieril completa de reconstrucción por IA..."):
+                            hoy = datetime.now()
+                            f1 = hoy.strftime("%Y-%m-%d")
+                            f2 = (hoy + timedelta(days=1)).strftime("%Y-%m-%d")
+                            f3 = (hoy + timedelta(days=2)).strftime("%Y-%m-%d")
+                            f4 = (hoy + timedelta(days=3)).strftime("%Y-%m-%d")
+
+                            prompt_lookahead_real = f"""
+                            La Supervisión rechazó definitivamente la propuesta ligera para {ncr_sel}: '{fila_ncr['descripcion']}'.
+                            Causa / Motivo del Inspector: '{objecion_inspector}'.
+                            Contratista/Especialidad causa raíz: {fila_ncr['causa_raiz']}.
+
+                            Como INGENIERO DE OBRA / VDC, diseña la SECUENCIA CONSTRUCTIVA COMPLETA Y REAL de retrabajo/reconstrucción para solucionar la raíz del problema.
+                            Identifica los contratistas involucrados (ej. Melamine, Enchape/Cerámico, Obra Civil, Pintura) y asigna las actividades secuenciales necesarias (desmontar, picar, resanar/nivelar, re-enchapar, reinstalar).
+
+                            Devuelve UN JSON ESTRICTO con la lista 'secuencia_propuesta':
+                            {{
+                                "secuencia_propuesta": [
+                                    {{"paso": 1, "fecha_prog": "{f1}", "contratista": "{fila_ncr['causa_raiz']}", "actividad": "Desmontaje y retiro con cuidado de elemento afectado", "horas": 2}},
+                                    {{"paso": 2, "fecha_prog": "{f1}", "contratista": "ENCHAPE/CERÁMICO", "actividad": "Picado y retiro de piezas cerámicas/zócalos afectados", "horas": 3}},
+                                    {{"paso": 3, "fecha_prog": "{f2}", "contratista": "OBRA CIVIL", "actividad": "Resane, nivelación y vaciado de contrapiso / base de asentado", "horas": 4}},
+                                    {{"paso": 4, "fecha_prog": "{f3}", "contratista": "ENCHAPE/CERÁMICO", "actividad": "Colocación de nuevo cerámico, fraguado y curado", "horas": 4}},
+                                    {{"paso": 5, "fecha_prog": "{f4}", "contratista": "{fila_ncr['causa_raiz']}", "actividad": "Reinstalación, aplomo y nivelación final de mueble", "horas": 3}}
+                                ]
+                            }}
+                            """
+                            
                             res_lk = json.loads(client.chat.completions.create(
                                 model="gpt-4o-mini",
                                 response_format={"type": "json_object"},
-                                messages=[{"role": "user", "content": prompt_lookahead}]
+                                messages=[{"role": "user", "content": prompt_lookahead_real}]
                             ).choices[0].message.content)
 
+                            secuencia_nueva = res_lk["secuencia_propuesta"]
+
                             st.session_state.db_ncrs.at[idx_fila, "tipo_resolucion"] = "Reingreso Interpartidas (Secuencia Lookahead)"
-                            st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta"
-                            st.session_state.db_ncrs.at[idx_fila, "plan_json"] = json.dumps(res_lk["secuencia_propuesta"])
-                            st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(res_lk["secuencia_propuesta"]))
-                            st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(["Pendiente tras rechazo definitivo"] * len(res_lk["secuencia_propuesta"]))
+                            st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (En Reconstrucción Lookahead)"
+                            st.session_state.db_ncrs.at[idx_fila, "plan_json"] = json.dumps(secuencia_nueva)
+                            st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(secuencia_nueva))
+                            st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(["Pendiente de reconstrucción"] * len(secuencia_nueva))
                             st.session_state.pop(f"refutacion_{ncr_sel}", None)
                             
+                            st.success("🔄 ¡NCR reestructurada ingenierilmente por la IA a secuencia Lookahead completa de reconstrucción multi-contratista!")
                             st.rerun()
 
-            # Muestra el borrador de refutación si existe
             if f"refutacion_{ncr_sel}" in st.session_state:
                 st.markdown("---")
                 st.info("💡 **BORRADOR DE REFUTACIÓN TÉCNICA (BASADO EN LA OBJECIÓN DEL INSPECTOR):**")
                 st.text_area(
-                    "✉️ Copia este texto para responder al Inspector por correo o WhatsApp:", 
+                    "✉️️ Copia este texto para responder al Inspector por correo o WhatsApp:", 
                     value=st.session_state[f"refutacion_{ncr_sel}"], 
-                    height=250
+                    height=220
                 )
                 st.markdown("---")
 

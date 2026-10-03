@@ -158,7 +158,7 @@ if formato == "Formato 1: Registro e ICE (Oficina)":
         if data['tipo_res'] == "Solución Directa Todista / Criterio de Supervisión":
             st.info(f"💡 **Análisis Técnico:** {data['analisis']}")
             
-            st.subheader("🛡️️ Sustento para Evitar Retrabajo Invasivo")
+            st.subheader("🛡 Sustento para Evitar Retrabajo Invasivo")
             st.warning(f"**Justificación:** {data['justificacion']}")
             
             st.subheader("🛠️ Propuesta de Mitigación / Criterio de Aceptación")
@@ -265,6 +265,14 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                     ]
                 )
                 
+                # Campo condicional para escribir la objeción del inspector
+                objecion_inspector = ""
+                if "RECHAZADO (Reiterar" in dictamen_sup:
+                    objecion_inspector = st.text_area(
+                        "🗣️ Copia/Escribe el motivo del rechazo u objeción del Inspector:",
+                        placeholder="Ejemplo: El inspector indica que el sellador se va a desprender con la limpieza de la cocina y exige una solución impermeable fija."
+                    )
+
                 if st.button("📝 Registrar Dictamen de Supervisión"):
                     if "APROBADO" in dictamen_sup:
                         st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (Aprobada por Supervisión)"
@@ -273,15 +281,24 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                         st.rerun()
 
                     elif "RECHAZADO (Reiterar" in dictamen_sup:
-                        with st.spinner("Generando borrador de refutación técnica con la IA..."):
-                            prompt_reiterar = f"La Supervisión ({sup_nombre}) rechazó la propuesta inicial para la observación {ncr_sel}: '{fila_ncr['descripcion']}'. Genera un borrador formal de correo de refutación/renegociación ofreciendo un sustento técnico más riguroso (bajo norma ISO 9001 / E.T.) y un ajuste en el acabado (ejemplo: junta con sellador de poliuretano de alta elasticidad) para convencer al inspector sin necesidad de desmontar o picar."
-                            nuevo_correo = client.chat.completions.create(
-                                model="gpt-4o-mini",
-                                messages=[{"role": "user", "content": prompt_reiterar}]
-                            ).choices[0].message.content
-                            
-                            st.session_state[f"refutacion_{ncr_sel}"] = nuevo_correo
-                            st.rerun()
+                        if not objecion_inspector:
+                            st.warning("Por favor ingrese el motivo u objeción del inspector para formular la refutación técnica.")
+                        else:
+                            with st.spinner("Generando borrador de refutación enfocado en rebatir la objeción del inspector..."):
+                                prompt_reiterar = f"""
+                                La Supervisión ({sup_nombre}) rechazó la propuesta inicial para {ncr_sel}: '{fila_ncr['descripcion']}'.
+                                Objeción específica expresada por el Inspector: '{objecion_inspector}'.
+
+                                Genera un correo de refutación técnica formal respondiendo Y REBATIENDO punto por punto la objeción del inspector '{objecion_inspector}'.
+                                Sustenta la respuesta usando criterios de calidad (ISO 9001 / Especificaciones Técnicas / durabilidad / elasticidad) y propone un ajuste técnico mejorado (ej. sellador de poliuretano hibrido monocomponente de alto módulo o perfil de remate) para convencer al inspector sin necesidad de desmontar ni picar.
+                                """
+                                nuevo_correo = client.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=[{"role": "user", "content": prompt_reiterar}]
+                                ).choices[0].message.content
+                                
+                                st.session_state[f"refutacion_{ncr_sel}"] = nuevo_correo
+                                st.rerun()
 
                     elif "RECHAZADO DEFINITIVO" in dictamen_sup:
                         with st.spinner("Transformando a Secuencia Lookahead..."):
@@ -301,14 +318,14 @@ elif formato == "Formato 2: Monitoreo en Campo (Tiempo Real)":
                             
                             st.rerun()
 
-            # Muestra permanente del borrador de refutación si existe en session_state
+            # Muestra el borrador de refutación si existe
             if f"refutacion_{ncr_sel}" in st.session_state:
                 st.markdown("---")
-                st.info("💡 **NUEVO BORRADOR DE REFUTACIÓN TÉCNICA GENERADO:**")
+                st.info("💡 **BORRADOR DE REFUTACIÓN TÉCNICA (BASADO EN LA OBJECIÓN DEL INSPECTOR):**")
                 st.text_area(
-                    "✉️ Copia este texto para renegociar con la Supervisión por correo/WhatsApp:", 
+                    "✉️ Copia este texto para responder al Inspector por correo o WhatsApp:", 
                     value=st.session_state[f"refutacion_{ncr_sel}"], 
-                    height=220
+                    height=250
                 )
                 st.markdown("---")
 

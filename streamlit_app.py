@@ -1,8 +1,14 @@
-import json
+¡Tienes toda la razón! En el bloque anterior faltó colocar explícitamente el encabezado de las librerías al inicio.
+
+Aquí tienes el archivo streamlit_app.py completo, que empieza con todas las importaciones necesarias (import streamlit as st, import openai, etc.) y contiene el desarrollo completo de los 3 módulos:
+
+Python
+import streamlit as st
+import openai
 from datetime import datetime, timedelta
 import pandas as pd
+import json
 import requests
-import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
 # ==============================================================================
@@ -90,6 +96,13 @@ def parse_json_list(value, default=None):
         return result if isinstance(result, list) else default.copy()
     except Exception:
         return default.copy()
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
 
 
 def calcular_metricas(df):
@@ -379,9 +392,6 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
             hide_index=True
         )
 
-        # ----------------------------------------------------------------------
-        # GUARDADO DIRECTO A GOOGLE SHEETS VÍA GOOGLE APPS SCRIPT
-        # ----------------------------------------------------------------------
         if st.button("💾 Guardar NCR en Google Sheets"):
             if ncr_num in st.session_state.db_ncrs["ncr"].astype(str).tolist():
                 st.error(f"La NCR {ncr_num} ya existe. Evita duplicar registros.")
@@ -413,7 +423,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     int(data["plazo_objetivo"]),
                     "",  # tiempo_levantamiento_dias
                     "",  # levantada_oportunamente,
-                    "Implementación (Después)",  # fase_estudio asignado automáticamente
+                    "Implementación (Después)",
                     now_str(),
                     "",  # supervisor
                     "",  # dictamen_supervision
@@ -444,7 +454,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     st.error(f"Error de conexión al guardar: {e}")
 
 # ==============================================================================
-# 📱 FORMATO 2: MONITOREO EN CAMPO
+# 📱 FORMATO 2: MONITOREO EN CAMPO (COMPLETO)
 # ==============================================================================
 else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
@@ -462,11 +472,83 @@ else:
         st.markdown(f"**Ubicación y falla:** {fila_ncr['descripcion']}")
         st.markdown("---")
 
+        historial = parse_json_list(fila_ncr.get("historial_json", "[]"), [])
+        if historial:
+            with st.expander("🕘 Historial de eventos de la NCR"):
+                st.dataframe(pd.DataFrame(historial), use_container_width=True, hide_index=True)
+
         if fila_ncr["estado_ncr"] == "Levantada":
             st.success(f"✅ {ncr_sel} se encuentra levantada y liberada por Supervisión.")
             st.subheader("📜 Acta de Cierre Técnico")
             st.info(fila_ncr.get("acta_cierre", ""))
+
         else:
+            # NEGOCIACIÓN / VALIDACIÓN DE SUPERVISIÓN
+            if fila_ncr["estado_ncr"] == "Pendiente Validación Supervisión":
+                st.warning("Esta propuesta se encuentra pendiente de validación de Supervisión.")
+
+                col_v1, col_v2 = st.columns(2)
+                sup_nombre = col_v1.text_input("👤 Nombre del Inspector/Supervisor", value=fila_ncr.get("supervisor", ""))
+                dictamen_sup = col_v2.radio(
+                    "📌 Dictamen de Supervisión:",
+                    [
+                        "✅ APROBADO (Ejecutar propuesta ligera con Todistas)",
+                        "2. RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
+                        "🚨 RECHAZADO DEFINITIVO (Asumir reconstrucción total con Lookahead)"
+                    ]
+                )
+
+                objecion_inspector = ""
+                if "RECHAZADO" in dictamen_sup:
+                    objecion_inspector = st.text_area(
+                        "🗣️ Razón o motivo del rechazo del Inspector",
+                        value=fila_ncr.get("objecion_supervision", ""),
+                        placeholder="Escribe la objeción técnica..."
+                    )
+
+                if st.button("📝 Registrar Dictamen de Supervisión"):
+                    st.session_state.db_ncrs.at[idx_fila, "supervisor"] = sup_nombre
+                    st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = dictamen_sup
+                    st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = objecion_inspector
+                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
+
+                    if "APROBADO" in dictamen_sup:
+                        st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (Aprobada por Supervisión)"
+                        st.success("Propuesta aprobada. Se habilitó el checklist.")
+                        st.rerun()
+
+                    elif "RECHAZADO (Reiterar" in dictamen_sup:
+                        if not objecion_inspector:
+                            st.warning("Ingrese la objeción del inspector para generar la refutación.")
+                        else:
+                            try:
+                                with st.spinner("Generando borrador de respuesta técnica..."):
+                                    prompt_reiterar = f"""
+La Supervisión ({sup_nombre}) rechazó la propuesta inicial para {ncr_sel}: '{fila_ncr['descripcion']}'.
+Objeción del Inspector: '{objecion_inspector}'.
+Genera un borrador de respuesta técnica formal que responda a la objeción sin inventar normas.
+"""
+                                    nuevo_correo = client.chat.completions.create(
+                                        model="gpt-4o-mini",
+                                        messages=[{"role": "user", "content": prompt_reiterar}]
+                                    ).choices[0].message.content
+                                st.session_state[f"refutacion_{ncr_sel}"] = nuevo_correo
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error generando refutación: {e}")
+
+                    elif "RECHAZADO DEFINITIVO" in dictamen_sup:
+                        st.session_state.db_ncrs.at[idx_fila, "tipo_resolucion"] = "Reingreso Interpartidas (Secuencia Lookahead)"
+                        st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (En Reconstrucción Lookahead)"
+                        st.success("Reestructurado a secuencia Lookahead.")
+                        st.rerun()
+
+            if f"refutacion_{ncr_sel}" in st.session_state:
+                st.markdown("---")
+                st.info("💡 BORRADOR DE RESPUESTA TÉCNICA")
+                st.text_area("Texto para responder al Inspector:", value=st.session_state[f"refutacion_{ncr_sel}"], height=200)
+
+            # CHECKLIST DE PASOS
             plan = parse_json_list(fila_ncr.get("plan_json", "[]"), [])
             estado_pasos = parse_json_list(fila_ncr.get("cumplimiento_json", "[]"), [])
             obs_pasos = parse_json_list(fila_ncr.get("observaciones_json", "[]"), [])
@@ -493,10 +575,11 @@ else:
                         txt_obs = st.text_input(f"Observación paso {idx + 1}", value=val_obs, key=f"txt_{ncr_sel}_{idx}")
                         nuevas_obs.append(txt_obs)
 
-                st.markdown("---")
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
+                # INSPECCIÓN FINAL Y CIERRE
                 if todos_ejecutados:
+                    st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y liberación por Supervisión")
                     supervisor = st.text_input("👤 Inspector / Supervisor de Calidad", value=fila_ncr.get("supervisor", ""))
                     obs_supervision = st.text_area("💬 Comentarios de la inspección")
@@ -505,8 +588,24 @@ else:
                         if not supervisor.strip():
                             st.warning("Ingrese el nombre del supervisor antes de cerrar.")
                         else:
-                            resp_cierre = generar_cierre_gpt(
-                                ncr_sel, fila_ncr["descripcion"], supervisor, obs_supervision
-                            )
-                            fecha_cierre = now_str()
-                            st.success(f"✅ {ncr_sel} liberada correctamente por {supervisor}.")
+                            try:
+                                with st.spinner("Generando borrador de Acta de Cierre Técnico..."):
+                                    resp_cierre = generar_cierre_gpt(
+                                        ncr_sel, fila_ncr["descripcion"], supervisor, obs_supervision
+                                    )
+
+                                fecha_cierre = now_str()
+                                fecha_inicio = pd.to_datetime(fila_ncr.get("fecha_hora_registro"), errors="coerce")
+                                fecha_fin = pd.to_datetime(fecha_cierre, errors="coerce")
+                                dias = round((fecha_fin - fecha_inicio).total_seconds() / 86400, 2) if pd.notna(fecha_inicio) else ""
+
+                                st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
+                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = fecha_cierre
+                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = dias
+                                st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = (
+                                    f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha: {fecha_cierre}\n\n{resp_cierre}"
+                                )
+                                st.success(f"✅ {ncr_sel} liberada y cerrada correctamente.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al cerrar la NCR: {e}")

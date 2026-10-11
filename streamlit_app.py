@@ -43,7 +43,7 @@ def empty_db():
 
 
 def load_db():
-    """Carga la base de datos desde Google Sheets asegurando tipos de texto."""
+    """Carga la base de datos asegurando la lectura limpia de campos de fechas y tiempos."""
     try:
         df = conn.read(ttl=0)
         if df is None or df.empty:
@@ -67,11 +67,12 @@ def load_db():
             "acta_cierre", "supervisor", "dictamen_supervision", "objecion_supervision",
             "estado_ncr", "descripcion", "causa_raiz", "empresa", "tipo_resolucion",
             "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision",
-            "fecha_hora_registro", "fecha_hora_levantamiento", "tiempo_levantamiento_dias"
+            "fecha_hora_registro", "fecha_hora_levantamiento", "tiempo_levantamiento_dias",
+            "fecha", "fase_estudio"
         ]
         for c in cols_texto:
             if c in df.columns:
-                df[c] = df[c].astype(str).replace("nan", "").replace("None", "")
+                df[c] = df[c].astype(str).replace("nan", "").replace("None", "").str.strip()
 
         extras = [c for c in df.columns if c not in BASE_COLUMNS]
         df = df[BASE_COLUMNS + extras]
@@ -140,8 +141,6 @@ def calcular_metricas(df):
 
 def preparar_df_indicadores(df):
     out = df.copy()
-    out["fecha_reg_dt"] = pd.to_datetime(out["fecha_hora_registro"], errors="coerce")
-    out["fecha_lev_dt"] = pd.to_datetime(out["fecha_hora_levantamiento"], errors="coerce")
     out["tiempo_calculado_dias"] = pd.to_numeric(out["tiempo_levantamiento_dias"], errors="coerce")
     out["plazo_num"] = pd.to_numeric(out["plazo_objetivo_dias"], errors="coerce")
     return out
@@ -389,7 +388,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
             else:
                 df_guardar = df_edit.copy()
                 df_guardar["fecha_prog"] = df_guardar["fecha_prog"].astype(str)
-                registro_ts = f"{str(fecha_reg)} {datetime.now().strftime('%H:%M:%S')}"
+                registro_ts = f"{data['fecha']} {datetime.now().strftime('%H:%M:%S')}"
                 estado_ini = (
                     "Pendiente Validación Supervisión"
                     if data["tipo_res"] == "Solución Directa Todista / Criterio de Supervisión"
@@ -409,11 +408,11 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     json.dumps(["NO Cumplió"] * len(df_guardar), ensure_ascii=False),
                     json.dumps(["Pendiente de validación/ejecución"] * len(df_guardar), ensure_ascii=False),
                     "",  # acta_cierre
-                    registro_ts,
+                    registro_ts,  # fecha_hora_registro GARANTIZADA
                     "",  # fecha_hora_levantamiento
                     int(data["plazo_objetivo"]),
                     "",  # tiempo_levantamiento_dias
-                    "",  # levantada_oportunamente,
+                    "",  # levantada_oportunamente
                     "Implementación (Después)",
                     now_str(),
                     "",  # supervisor
@@ -445,7 +444,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     st.error(f"Error de conexión al guardar: {e}")
 
 # ==============================================================================
-# 📱 FORMATO 2: MONITOREO EN CAMPO (FLUJO CONDICIONAL CORREGIDO)
+# 📱 FORMATO 2: MONITOREO EN CAMPO
 # ==============================================================================
 else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
@@ -468,7 +467,7 @@ else:
             with st.expander("🕘 Historial de eventos de la NCR"):
                 st.dataframe(pd.DataFrame(historial), use_container_width=True, hide_index=True)
 
-        estado_actual = fila_ncr["estado_ncr"]
+        estado_actual = str(fila_ncr["estado_ncr"])
 
         # CASO 1: YA LEVANTADA Y CERRADA
         if estado_actual == "Levantada":
@@ -476,7 +475,7 @@ else:
             st.subheader("📜 Acta de Cierre Técnico")
             st.info(fila_ncr.get("acta_cierre", ""))
 
-        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN (OCULTA EL CHECKLIST)
+        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN (OCULTA CHECKLIST)
         elif estado_actual == "Pendiente Validación Supervisión":
             st.warning("🔒 Esta propuesta se encuentra PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN. El checklist de ejecución se activará una vez aprobada la propuesta.")
 
@@ -520,7 +519,7 @@ else:
                     st.session_state.db_ncrs = load_db()
                     st.rerun()
 
-        # CASO 3: APROBADA O ABIERTA (SE MUESTRA EL CHECKLIST)
+        # CASO 3: APROBADA O ABIERTA (MOSTRAR CHECKLIST DE CAMPO)
         else:
             plan = parse_json_list(fila_ncr.get("plan_json", "[]"), [])
             estado_pasos = parse_json_list(fila_ncr.get("cumplimiento_json", "[]"), [])
@@ -552,7 +551,7 @@ else:
                     st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados, ensure_ascii=False)
                     st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs, ensure_ascii=False)
                     st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
-                    
+
                     fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
                     requests.post(URL_WEB_APP, json={"row": fila_actualizada})
                     st.success("Avance del checklist guardado correctamente.")
@@ -561,7 +560,7 @@ else:
 
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # INSPECCIÓN FINAL Y CIERRE TÉCNICO
+                # INSPECCIÓN FINAL Y CIERRE TÉCNICO (CON GUARDA DE FECHA LEVANTAMIENTO)
                 if todos_ejecutados:
                     st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y Cierre Técnico por Supervisión")
@@ -583,8 +582,13 @@ else:
                                     )
 
                                 str_fecha_cierre = f"{fecha_cierre_manual.strftime('%Y-%m-%d')} {datetime.now().strftime('%H:%M:%S')}"
-                                
-                                fecha_reg_raw = fila_ncr.get("fecha_hora_registro")
+
+                                # Garantizamos lectura de fecha de registro original
+                                fecha_reg_raw = str(fila_ncr.get("fecha_hora_registro", "")).strip()
+                                if not fecha_reg_raw:
+                                    fecha_reg_raw = f"{str(fila_ncr.get('fecha', now_str()[:10]))} 08:00:00"
+                                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_registro"] = fecha_reg_raw
+
                                 try:
                                     f_inicio = pd.to_datetime(fecha_reg_raw)
                                     f_fin = pd.to_datetime(str_fecha_cierre)
@@ -592,7 +596,7 @@ else:
                                 except Exception:
                                     dias_calc = 1.0
 
-                                texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha de Cierre: {str_fecha_cierre}\nTiempo Levantamiento: {dias_calc} días\n\n{resp_cierre}"
+                                texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha Cierre: {str_fecha_cierre}\nTiempo Levantamiento: {dias_calc} días\n\n{resp_cierre}"
 
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
                                 st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = str(str_fecha_cierre)
@@ -605,7 +609,7 @@ else:
                                 res = requests.post(URL_WEB_APP, json={"row": fila_actualizada})
 
                                 if "OK" in res.text:
-                                    st.success(f"✅ {ncr_sel} liberada y cerrada correctamente. Tiempo registrado: {dias_calc} días.")
+                                    st.success(f"✅ {ncr_sel} liberada y cerrada correctamente. Tiempo levantamiento registrado: {dias_calc} días.")
                                     st.session_state.db_ncrs = load_db()
                                     st.rerun()
                                 else:

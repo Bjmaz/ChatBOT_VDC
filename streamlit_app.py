@@ -1,9 +1,8 @@
-import streamlit as st
-import openai
+import json
 from datetime import datetime, timedelta
 import pandas as pd
-import json
 import requests
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
 # ==============================================================================
@@ -25,7 +24,6 @@ CONTRATISTAS_LISTA = [
 ]
 
 ESTADOS_CERRADOS = ["Levantada"]
-FASES_ESTUDIO = ["Línea base (Antes)", "Implementación (Después)"]
 
 BASE_COLUMNS = [
     "ncr", "proyecto", "fecha", "descripcion", "causa_raiz", "empresa",
@@ -94,15 +92,8 @@ def parse_json_list(value, default=None):
         return default.copy()
 
 
-def safe_float(value, default=0.0):
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
 def calcular_metricas(df):
-    """Calcula los indicadores de tesis sobre el conjunto filtrado."""
+    """Calcula los indicadores sobre el conjunto filtrado."""
     if df.empty:
         return {
             "total": 0, "cerradas": 0, "pendientes": 0,
@@ -149,25 +140,7 @@ def preparar_df_indicadores(df):
         out["fecha_lev_dt"] - out["fecha_reg_dt"]
     ).dt.total_seconds() / 86400
     out["plazo_num"] = pd.to_numeric(out["plazo_objetivo_dias"], errors="coerce")
-    out["oportuna_calculada"] = (
-        out["estado_ncr"].isin(ESTADOS_CERRADOS)
-        & out["tiempo_calculado_dias"].notna()
-        & out["plazo_num"].notna()
-        & (out["plazo_num"] > 0)
-        & (out["tiempo_calculado_dias"] <= out["plazo_num"])
-    )
     return out
-
-
-def registrar_historial(row, evento, detalle=""):
-    historial = parse_json_list(row.get("historial_json", "[]"), [])
-    historial.append({
-        "fecha_hora": now_str(),
-        "evento": evento,
-        "detalle": detalle,
-        "estado": row.get("estado_ncr", "")
-    })
-    return json.dumps(historial, ensure_ascii=False)
 
 
 def procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_res, fecha_inicio_str, observacion_previa=""):
@@ -278,30 +251,25 @@ if formato == "📊 Dashboard de Indicadores":
     else:
         df_calc = preparar_df_indicadores(df_raw)
 
-        f1, f2, f3 = st.columns(3)
+        f1, f2 = st.columns(2)
         proyectos = sorted([str(x) for x in df_raw["proyecto"].dropna().unique() if str(x).strip()])
-        fases = [x for x in FASES_ESTUDIO if x in set(df_raw["fase_estudio"].astype(str))]
         contratistas = sorted([str(x) for x in df_raw["causa_raiz"].dropna().unique() if str(x).strip()])
 
         with f1:
             proyecto_sel = st.multiselect("Proyecto", proyectos)
         with f2:
-            fase_sel = st.multiselect("Fase del estudio", fases)
-        with f3:
             contratista_sel = st.multiselect("Especialidad", contratistas)
 
         mask = pd.Series(True, index=df_calc.index)
         if proyecto_sel:
             mask &= df_calc["proyecto"].isin(proyecto_sel)
-        if fase_sel:
-            mask &= df_calc["fase_estudio"].isin(fase_sel)
         if contratista_sel:
             mask &= df_calc["causa_raiz"].isin(contratista_sel)
 
         df_f = df_calc.loc[mask].copy()
         m = calcular_metricas(df_f)
 
-        st.markdown("### Indicadores Clave de la Tesis")
+        st.markdown("### Indicadores Clave")
         k1, k2, k3 = st.columns(3)
         with k1:
             st.metric("TNC — Tiempo promedio de levantamiento", "—" if m["tnc"] is None else f"{m['tnc']:.2f} días")
@@ -315,7 +283,7 @@ if formato == "📊 Dashboard de Indicadores":
 
         st.markdown("### Trazabilidad Individual")
         tabla = df_f[[
-            "ncr", "proyecto", "fase_estudio", "fecha_hora_registro", "fecha_hora_levantamiento",
+            "ncr", "proyecto", "fecha_hora_registro", "fecha_hora_levantamiento",
             "estado_ncr", "plazo_objetivo_dias", "tiempo_calculado_dias", "causa_raiz", "empresa"
         ]].copy()
         tabla["tiempo_calculado_dias"] = tabla["tiempo_calculado_dias"].round(2)
@@ -330,7 +298,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
     with st.form("form_ncr"):
         col1, col2, col3 = st.columns([1, 2, 1])
         ncr_num = col1.text_input("🔢 N° de NCR / Observación", placeholder="Ej: NCR-001")
-        proyecto = col2.text_input("🏗️ Proyecto", placeholder="Ej: Alto Bellavista II")
+        proyecto = col2.text_input("🏗️ Proyecto", placeholder="Ej: ALTO BELLAVISTA II")
         fecha_reg = col3.date_input("📅 Fecha de identificación", datetime.now())
 
         descripcion = st.text_area(
@@ -338,13 +306,10 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
             placeholder="Ingrese piso, ambiente, eje y detalle técnico..."
         )
 
-        col_a, col_b = st.columns(2)
+        col_a, col_b, col_c = st.columns([2, 2, 1])
         contratista_causa = col_a.selectbox("👷 Especialidad involucrada", CONTRATISTAS_LISTA)
         subcontratista = col_b.text_input("🏢 Empresa subcontratista / cuadrilla", placeholder="Nombre de empresa responsable")
-
-        col_c, col_d = st.columns(2)
-        fase_estudio = col_c.selectbox("📚 Fase del estudio", FASES_ESTUDIO)
-        plazo_objetivo = col_d.number_input("⏱️ Plazo objetivo (días)", min_value=1, max_value=60, value=3)
+        plazo_objetivo = col_c.number_input("⏱️ Plazo objetivo (días)", min_value=1, max_value=60, value=3)
 
         tipo_resolucion = st.radio(
             "🛠 Modalidad de subsanación:",
@@ -369,7 +334,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                 st.session_state.temp_ncr = {
                     "num": ncr_num, "proyecto": proyecto, "fecha": str(fecha_reg),
                     "descripcion": descripcion, "causa": contratista_causa, "empresa": subcontratista,
-                    "tipo_res": tipo_resolucion, "fase_estudio": fase_estudio,
+                    "tipo_res": tipo_resolucion, "fase_estudio": "Implementación (Después)",
                     "plazo_objetivo": plazo_objetivo,
                     "analisis": res_json.get("causa_raiz_analisis", ""),
                     "justificacion": res_json.get("justificacion_no_retrabajo", ""),
@@ -447,8 +412,8 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     "",  # fecha_hora_levantamiento
                     int(data["plazo_objetivo"]),
                     "",  # tiempo_levantamiento_dias
-                    "",  # levantada_oportunamente
-                    data["fase_estudio"],
+                    "",  # levantada_oportunamente,
+                    "Implementación (Después)",  # fase_estudio asignado automáticamente
                     now_str(),
                     "",  # supervisor
                     "",  # dictamen_supervision

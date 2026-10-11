@@ -32,13 +32,12 @@ def empty_db():
 
 
 def load_db():
-    """Carga la base de datos respetando exactamente las columnas de la hoja de Google Sheets."""
+    """Carga la base de datos de Google Sheets."""
     try:
         df = conn.read(ttl=0)
         if df is None or df.empty:
             return empty_db()
         
-        # Limpieza general de textos y NaN
         df = df.fillna("")
         for col in df.columns:
             df[col] = df[col].astype(str).replace("nan", "").replace("None", "").str.strip()
@@ -117,18 +116,22 @@ def calcular_metricas(df):
 def preparar_df_indicadores(df):
     out = df.copy()
     
-    # Mapeo dinámico para soportar variaciones en nombres de columnas de la hoja
+    # Mapeo de fechas
     out["fecha_reg_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_registro", "fecha_hora_registro", "fecha"]), axis=1)
     out["fecha_lev_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_cierre", "fecha_aprobacion", "fecha_hora_levantamiento"]), axis=1)
     
     out["fecha_reg_dt"] = pd.to_datetime(out["fecha_reg_str"], errors="coerce")
     out["fecha_lev_dt"] = pd.to_datetime(out["fecha_lev_str"], errors="coerce")
     
-    # Cálculo del tiempo transcurrido en días si no estuviese ya calculado
-    dias_calc = (out["fecha_lev_dt"] - out["fecha_reg_dt"]).dt.total_seconds() / 86400
-    dias_directos = pd.to_numeric(out.apply(lambda r: obtener_valor_columna(r, ["tiempo_levantamiento_dias", "fecha_inspeccion"]), axis=1), errors="coerce")
-    
-    out["tiempo_calculado_dias"] = dias_directos.fillna(dias_calc)
+    # Cálculo preciso en días (mismo día = mínimo 1.0 día)
+    def rel_dias(r):
+        if pd.notna(r["fecha_lev_dt"]) and pd.notna(r["fecha_reg_dt"]):
+            # Diferencia por fechas sin horas
+            d_dias = (r["fecha_lev_dt"].date() - r["fecha_reg_dt"].date()).days
+            return max(1.0, float(d_dias)) if d_dias == 0 else float(d_dias)
+        return None
+
+    out["tiempo_calculado_dias"] = out.apply(rel_dias, axis=1)
     out["plazo_num"] = pd.to_numeric(out.apply(lambda r: obtener_valor_columna(r, ["plazo_objetivo_dias", "fecha_ejecucion"], default="3"), axis=1), errors="coerce").fillna(3)
     
     return out
@@ -274,7 +277,6 @@ if formato == "📊 Dashboard de Indicadores":
 
         st.markdown("### Trazabilidad Individual")
         
-        # Mapeo de columnas para la tabla limpia
         tabla = pd.DataFrame()
         tabla["ncr"] = df_f["ncr"]
         tabla["proyecto"] = df_f["proyecto"]
@@ -282,7 +284,7 @@ if formato == "📊 Dashboard de Indicadores":
         tabla["fecha_hora_levantamiento"] = df_f["fecha_lev_str"]
         tabla["estado_ncr"] = df_f["estado_ncr"]
         tabla["plazo_objetivo_dias"] = df_f["plazo_num"]
-        tabla["tiempo_calculado_dias"] = df_f["tiempo_calculado_dias"].round(2)
+        tabla["tiempo_calculado_dias"] = df_f["tiempo_calculado_dias"].round(1)
         tabla["causa_raiz"] = df_f["causa_raiz"]
         tabla["empresa"] = df_f["empresa"]
 
@@ -391,7 +393,6 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     else "Abierta"
                 )
 
-                # Construir la fila completa coincidiendo con la estructura actual de la hoja
                 col_headers = list(st.session_state.db_ncrs.columns)
                 row_dict = {col: "" for col in col_headers}
                 
@@ -463,13 +464,11 @@ else:
 
         estado_actual = str(fila_ncr.get("estado_ncr", ""))
 
-        # CASO 1: YA LEVANTADA Y CERRADA
         if estado_actual == "Levantada":
             st.success(f"✅ {ncr_sel} se encuentra levantada y liberada por Supervisión.")
             st.subheader("📜 Acta de Cierre Técnico")
             st.info(fila_ncr.get("acta_cierre", ""))
 
-        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN
         elif estado_actual == "Pendiente Validación Supervisión":
             st.warning("🔒 Esta propuesta se encuentra PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN. El checklist de ejecución se activará una vez aprobada la propuesta.")
 
@@ -514,7 +513,6 @@ else:
                     st.session_state.db_ncrs = load_db()
                     st.rerun()
 
-        # CASO 3: APROBADA O ABIERTA (MOSTRAR CHECKLIST DE CAMPO)
         else:
             plan = parse_json_list(fila_ncr.get("plan_json", "[]"), [])
             estado_pasos = parse_json_list(fila_ncr.get("cumplimiento_json", "[]"), [])
@@ -554,7 +552,6 @@ else:
 
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # INSPECCIÓN FINAL Y CIERRE TÉCNICO
                 if todos_ejecutados:
                     st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y Cierre Técnico por Supervisión")
@@ -577,7 +574,6 @@ else:
 
                                 str_fecha_cierre = f"{fecha_cierre_manual.strftime('%Y-%m-%d')} {datetime.now().strftime('%H:%M:%S')}"
 
-                                # Garantizamos lectura de fecha de registro original probando varios campos posibles de la hoja
                                 fecha_reg_raw = obtener_valor_columna(fila_ncr, ["fecha_registro", "fecha_hora_registro", "fecha"])
                                 if not fecha_reg_raw:
                                     fecha_reg_raw = f"{str_fecha_cierre[:10]} 08:00:00"
@@ -585,7 +581,8 @@ else:
                                 try:
                                     f_inicio = pd.to_datetime(fecha_reg_raw)
                                     f_fin = pd.to_datetime(str_fecha_cierre)
-                                    dias_calc = round(max(0.1, (f_fin - f_inicio).total_seconds() / 86400), 2)
+                                    d_dias = (f_fin.date() - f_inicio.date()).days
+                                    dias_calc = max(1.0, float(d_dias)) if d_dias == 0 else float(d_dias)
                                 except Exception:
                                     dias_calc = 1.0
 
@@ -593,7 +590,6 @@ else:
 
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
                                 
-                                # Guardar en campos correspondientes de la hoja
                                 for c_lev in ["fecha_aprobacion", "fecha_cierre", "fecha_hora_levantamiento"]:
                                     if c_lev in st.session_state.db_ncrs.columns:
                                         st.session_state.db_ncrs.at[idx_fila, c_lev] = str(str_fecha_cierre)

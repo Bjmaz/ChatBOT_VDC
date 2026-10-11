@@ -5,7 +5,6 @@ import pandas as pd
 import json
 import requests
 from streamlit_gsheets import GSheetsConnection
-
 # ==============================================================================
 # CONFIGURACIÓN E INTEGRACIÓN
 # ==============================================================================
@@ -43,7 +42,7 @@ def empty_db():
 
 
 def load_db():
-    """Carga la base de datos de lectura desde Google Sheets."""
+    """Carga la base de datos de lectura desde Google Sheets asegurando tipos de texto."""
     try:
         df = conn.read(ttl=0)
         if df is None or df.empty:
@@ -64,6 +63,16 @@ def load_db():
                 else:
                     default = ""
                 df[col] = default
+
+        # 🔧 Convertir explícitamente columnas de texto a string para evitar TypeError (float64)
+        cols_texto = [
+            "acta_cierre", "supervisor", "dictamen_supervision", "objecion_supervision",
+            "estado_ncr", "descripcion", "causa_raiz", "empresa", "tipo_resolucion",
+            "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision"
+        ]
+        for c in cols_texto:
+            if c in df.columns:
+                df[c] = df[c].astype(str).replace("nan", "").replace("None", "")
 
         extras = [c for c in df.columns if c not in BASE_COLUMNS]
         df = df[BASE_COLUMNS + extras]
@@ -91,13 +100,6 @@ def parse_json_list(value, default=None):
         return result if isinstance(result, list) else default.copy()
     except Exception:
         return default.copy()
-
-
-def safe_float(value, default=0.0):
-    try:
-        return float(value)
-    except Exception:
-        return default
 
 
 def calcular_metricas(df):
@@ -449,7 +451,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     st.error(f"Error de conexión al guardar: {e}")
 
 # ==============================================================================
-# 📱 FORMATO 2: MONITOREO EN CAMPO (COMPLETO)
+# 📱 FORMATO 2: MONITOREO EN CAMPO (COMPLETO Y CORREGIDO)
 # ==============================================================================
 else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
@@ -502,9 +504,9 @@ else:
                     )
 
                 if st.button("📝 Registrar Dictamen de Supervisión"):
-                    st.session_state.db_ncrs.at[idx_fila, "supervisor"] = sup_nombre
-                    st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = dictamen_sup
-                    st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = objecion_inspector
+                    st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(sup_nombre)
+                    st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = str(dictamen_sup)
+                    st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = str(objecion_inspector)
                     st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
 
                     if "APROBADO" in dictamen_sup:
@@ -572,11 +574,11 @@ Genera un borrador de respuesta técnica formal que responda a la objeción sin 
 
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # INSPECCIÓN FINAL Y CIERRE
+                # INSPECCIÓN FINAL Y CIERRE CORREGIDO
                 if todos_ejecutados:
                     st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y liberación por Supervisión")
-                    supervisor = st.text_input("👤 Inspector / Supervisor de Calidad", value=fila_ncr.get("supervisor", ""))
+                    supervisor = st.text_input("👤 Inspector / Supervisor de Calidad", value=str(fila_ncr.get("supervisor", "")))
                     obs_supervision = st.text_area("💬 Comentarios de la inspección")
 
                     if st.button("🔒 Confirmar inspección y registrar cierre"):
@@ -584,7 +586,7 @@ Genera un borrador de respuesta técnica formal que responda a la objeción sin 
                             st.warning("Ingrese el nombre del supervisor antes de cerrar.")
                         else:
                             try:
-                                with st.spinner("Generando borrador de Acta de Cierre Técnico..."):
+                                with st.spinner("Generando borrador de Acta de Cierre Técnico y guardando en Google Sheets..."):
                                     resp_cierre = generar_cierre_gpt(
                                         ncr_sel, fila_ncr["descripcion"], supervisor, obs_supervision
                                     )
@@ -594,13 +596,30 @@ Genera un borrador de respuesta técnica formal que responda a la objeción sin 
                                 fecha_fin = pd.to_datetime(fecha_cierre, errors="coerce")
                                 dias = round((fecha_fin - fecha_inicio).total_seconds() / 86400, 2) if pd.notna(fecha_inicio) else ""
 
+                                texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha: {fecha_cierre}\n\n{resp_cierre}"
+
+                                # Forzar columnas a objeto/string antes de la asignación en memoria
+                                st.session_state.db_ncrs["acta_cierre"] = st.session_state.db_ncrs["acta_cierre"].astype(str)
+                                st.session_state.db_ncrs["supervisor"] = st.session_state.db_ncrs["supervisor"].astype(str)
+                                st.session_state.db_ncrs["estado_ncr"] = st.session_state.db_ncrs["estado_ncr"].astype(str)
+
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
-                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = fecha_cierre
-                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = dias
-                                st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = (
-                                    f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha: {fecha_cierre}\n\n{resp_cierre}"
-                                )
-                                st.success(f"✅ {ncr_sel} liberada y cerrada correctamente.")
-                                st.rerun()
+                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = str(fecha_cierre)
+                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = str(dias)
+                                st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(supervisor)
+                                st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = str(texto_acta)
+
+                                # Extraemos la lista limpia formateada para la petición
+                                fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
+
+                                # Petición HTTP a la Web App de Apps Script
+                                res = requests.post(URL_WEB_APP, json={"row": fila_actualizada})
+
+                                if res.text == "OK":
+                                    st.success(f"✅ {ncr_sel} liberada y cerrada correctamente en Google Sheets.")
+                                    st.session_state.db_ncrs = load_db()
+                                    st.rerun()
+                                else:
+                                    st.error(f"Respuesta inesperada al guardar cierre: {res.text}")
                             except Exception as e:
                                 st.error(f"Error al cerrar la NCR: {e}")

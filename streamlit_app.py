@@ -1,4 +1,4 @@
-Aquí tienes el código completo y actualizado para tu archivo streamlit_app.py.Este código integra la conexión vía requests.post usando tu URL de Google Apps Script (lo que elimina definitivamente el error de permisos de escritura de Google Sheets), mantiene la lógica del ChatBot VDC con GPT-4o-mini, y gestiona los tres paneles principales (Dashboard de Indicadores, Formato 1 de Registro/ICE y Formato 2 de Monitoreo/Liberación en Campo).   📄 Código Completo (streamlit_app.py)Pythonimport streamlit as st
+import streamlit as st
 import openai
 from datetime import datetime, timedelta
 import pandas as pd

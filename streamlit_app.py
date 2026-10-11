@@ -15,7 +15,7 @@ client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 🔗 URL de tu Web App de Google Apps Script
-URL_WEB_APP = "https://script.google.com/macros/s/AKfycbzL25onMtSFb2VYdBBdWKbg9qqoj_9y_7kB8qbPy7olqXUhIx3h_F2A3MPeH_Hw7N29/exec"
+URL_WEB_APP = "https://script.google.com/macros/s/AKfycbzL25onMtSFb2VYdBBdWKbg9qqoj_9y_7kB8qBpY7olqXUhIx3h_F2A3MPeH_Hw7N29/exec"
 
 CONTRATISTAS_LISTA = [
     "OBRA CIVIL", "PINTURA", "PAPEL TAPIZ", "MELAMINE", "LAMINADO/PARQUET",

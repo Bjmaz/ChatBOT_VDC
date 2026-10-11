@@ -445,7 +445,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     st.error(f"Error de conexión al guardar: {e}")
 
 # ==============================================================================
-# 📱 FORMATO 2: MONITOREO EN CAMPO
+# 📱 FORMATO 2: MONITOREO EN CAMPO (FLUJO CONDICIONAL CORREGIDO)
 # ==============================================================================
 else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
@@ -468,36 +468,41 @@ else:
             with st.expander("🕘 Historial de eventos de la NCR"):
                 st.dataframe(pd.DataFrame(historial), use_container_width=True, hide_index=True)
 
-        if fila_ncr["estado_ncr"] == "Levantada":
+        estado_actual = fila_ncr["estado_ncr"]
+
+        # CASO 1: YA LEVANTADA Y CERRADA
+        if estado_actual == "Levantada":
             st.success(f"✅ {ncr_sel} se encuentra levantada y liberada por Supervisión.")
             st.subheader("📜 Acta de Cierre Técnico")
             st.info(fila_ncr.get("acta_cierre", ""))
 
-        else:
-            # NEGOCIACIÓN / VALIDACIÓN DE SUPERVISIÓN
-            if fila_ncr["estado_ncr"] == "Pendiente Validación Supervisión":
-                st.warning("Esta propuesta se encuentra pendiente de validación de Supervisión.")
+        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN (OCULTA EL CHECKLIST)
+        elif estado_actual == "Pendiente Validación Supervisión":
+            st.warning("🔒 Esta propuesta se encuentra PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN. El checklist de ejecución se activará una vez aprobada la propuesta.")
 
-                col_v1, col_v2 = st.columns(2)
-                sup_nombre = col_v1.text_input("👤 Nombre del Inspector/Supervisor", value=str(fila_ncr.get("supervisor", "")))
-                dictamen_sup = col_v2.radio(
-                    "📌 Dictamen de Supervisión:",
-                    [
-                        "✅ APROBADO (Ejecutar propuesta ligera con Todistas)",
-                        "2. RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
-                        "🚨 RECHAZADO DEFINITIVO (Asumir reconstrucción total con Lookahead)"
-                    ]
+            col_v1, col_v2 = st.columns(2)
+            sup_nombre = col_v1.text_input("👤 Nombre del Inspector/Supervisor", value=str(fila_ncr.get("supervisor", "")))
+            dictamen_sup = col_v2.radio(
+                "📌 Dictamen de Supervisión:",
+                [
+                    "✅ APROBADO (Ejecutar propuesta ligera con Todistas)",
+                    "2. RECHAZADO (Reiterar sustento / Proponer nuevo ajuste)",
+                    "🚨 RECHAZADO DEFINITIVO (Asumir reconstrucción total con Lookahead)"
+                ]
+            )
+
+            objecion_inspector = ""
+            if "RECHAZADO" in dictamen_sup:
+                objecion_inspector = st.text_area(
+                    "🗣️ Razón o motivo del rechazo del Inspector",
+                    value=str(fila_ncr.get("objecion_supervision", "")),
+                    placeholder="Escribe la objeción técnica..."
                 )
 
-                objecion_inspector = ""
-                if "RECHAZADO" in dictamen_sup:
-                    objecion_inspector = st.text_area(
-                        "🗣️ Razón o motivo del rechazo del Inspector",
-                        value=str(fila_ncr.get("objecion_supervision", "")),
-                        placeholder="Escribe la objeción técnica..."
-                    )
-
-                if st.button("📝 Registrar Dictamen de Supervisión"):
+            if st.button("📝 Registrar Dictamen de Supervisión"):
+                if not sup_nombre.strip():
+                    st.warning("Ingrese el nombre del supervisor antes de registrar el dictamen.")
+                else:
                     st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(sup_nombre)
                     st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = str(dictamen_sup)
                     st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = str(objecion_inspector)
@@ -515,7 +520,8 @@ else:
                     st.session_state.db_ncrs = load_db()
                     st.rerun()
 
-            # CHECKLIST DE PASOS DE EJECUCIÓN
+        # CASO 3: APROBADA O ABIERTA (SE MUESTRA EL CHECKLIST)
+        else:
             plan = parse_json_list(fila_ncr.get("plan_json", "[]"), [])
             estado_pasos = parse_json_list(fila_ncr.get("cumplimiento_json", "[]"), [])
             obs_pasos = parse_json_list(fila_ncr.get("observaciones_json", "[]"), [])
@@ -555,9 +561,7 @@ else:
 
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # --------------------------------------------------------------
-                # INSPECCIÓN FINAL Y CIERRE TÉCNICO (CON SELECTOR DE FECHA)
-                # --------------------------------------------------------------
+                # INSPECCIÓN FINAL Y CIERRE TÉCNICO
                 if todos_ejecutados:
                     st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y Cierre Técnico por Supervisión")
@@ -580,7 +584,6 @@ else:
 
                                 str_fecha_cierre = f"{fecha_cierre_manual.strftime('%Y-%m-%d')} {datetime.now().strftime('%H:%M:%S')}"
                                 
-                                # Cálculo exacto de días transcurridos
                                 fecha_reg_raw = fila_ncr.get("fecha_hora_registro")
                                 try:
                                     f_inicio = pd.to_datetime(fecha_reg_raw)
@@ -598,7 +601,6 @@ else:
                                 st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = str(texto_acta)
                                 st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
 
-                                # Petición HTTP a la Web App de Apps Script para ACTUALIZAR LA FILA
                                 fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
                                 res = requests.post(URL_WEB_APP, json={"row": fila_actualizada})
 

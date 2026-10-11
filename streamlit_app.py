@@ -26,56 +26,23 @@ CONTRATISTAS_LISTA = [
 
 ESTADOS_CERRADOS = ["Levantada"]
 
-BASE_COLUMNS = [
-    "ncr", "proyecto", "fecha", "descripcion", "causa_raiz", "empresa",
-    "tipo_resolucion", "estado_ncr", "plan_json", "cumplimiento_json",
-    "observaciones_json", "acta_cierre",
-    "fecha_hora_registro", "fecha_hora_levantamiento", "plazo_objetivo_dias",
-    "tiempo_levantamiento_dias", "levantada_oportunamente", "fase_estudio",
-    "fecha_hora_ultima_actualizacion", "supervisor", "dictamen_supervision",
-    "objecion_supervision", "version_resolucion", "historial_json",
-    "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision"
-]
-
 
 def empty_db():
-    return pd.DataFrame(columns=BASE_COLUMNS)
+    return pd.DataFrame()
 
 
 def load_db():
-    """Carga la base de datos asegurando la lectura limpia de campos de fechas y tiempos."""
+    """Carga la base de datos respetando exactamente las columnas de la hoja de Google Sheets."""
     try:
         df = conn.read(ttl=0)
         if df is None or df.empty:
             return empty_db()
-        if "ncr" not in df.columns:
-            return empty_db()
-
-        for col in BASE_COLUMNS:
-            if col not in df.columns:
-                if col in ["plan_json", "cumplimiento_json", "observaciones_json", "historial_json"]:
-                    default = "[]"
-                elif col == "plazo_objetivo_dias":
-                    default = 3
-                elif col == "version_resolucion":
-                    default = 1
-                else:
-                    default = ""
-                df[col] = default
-
-        cols_texto = [
-            "acta_cierre", "supervisor", "dictamen_supervision", "objecion_supervision",
-            "estado_ncr", "descripcion", "causa_raiz", "empresa", "tipo_resolucion",
-            "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision",
-            "fecha_hora_registro", "fecha_hora_levantamiento", "tiempo_levantamiento_dias",
-            "fecha", "fase_estudio"
-        ]
-        for c in cols_texto:
-            if c in df.columns:
-                df[c] = df[c].astype(str).replace("nan", "").replace("None", "").str.strip()
-
-        extras = [c for c in df.columns if c not in BASE_COLUMNS]
-        df = df[BASE_COLUMNS + extras]
+        
+        # Limpieza general de textos y NaN
+        df = df.fillna("")
+        for col in df.columns:
+            df[col] = df[col].astype(str).replace("nan", "").replace("None", "").str.strip()
+            
         return df
     except Exception as e:
         st.session_state.load_error = str(e)
@@ -102,6 +69,14 @@ def parse_json_list(value, default=None):
         return default.copy()
 
 
+def obtener_valor_columna(row, nombres_posibles, default=""):
+    """Busca en la fila el valor probando distintos nombres de columnas equivalentes."""
+    for col in nombres_posibles:
+        if col in row and str(row[col]).strip() != "":
+            return str(row[col]).strip()
+    return default
+
+
 def calcular_metricas(df):
     if df.empty:
         return {
@@ -114,13 +89,13 @@ def calcular_metricas(df):
     cerradas = int(df["estado_ncr"].isin(ESTADOS_CERRADOS).sum())
     pendientes = total - cerradas
 
-    tiempos = pd.to_numeric(df["tiempo_levantamiento_dias"], errors="coerce")
+    tiempos = pd.to_numeric(df["tiempo_calculado_dias"], errors="coerce")
     validos = tiempos.notna() & (tiempos >= 0)
 
     tnc = float(tiempos[validos].mean()) if validos.any() else None
     pnc = (pendientes / total * 100) if total else None
 
-    plazos = pd.to_numeric(df["plazo_objetivo_dias"], errors="coerce")
+    plazos = pd.to_numeric(df["plazo_num"], errors="coerce")
     oportunidad = validos & plazos.notna() & (plazos > 0) & (tiempos <= plazos)
     n_cerradas_con_plazo = int((validos & plazos.notna() & (plazos > 0)).sum())
     n_oportunas = int(oportunidad.sum())
@@ -141,8 +116,21 @@ def calcular_metricas(df):
 
 def preparar_df_indicadores(df):
     out = df.copy()
-    out["tiempo_calculado_dias"] = pd.to_numeric(out["tiempo_levantamiento_dias"], errors="coerce")
-    out["plazo_num"] = pd.to_numeric(out["plazo_objetivo_dias"], errors="coerce")
+    
+    # Mapeo dinámico para soportar variaciones en nombres de columnas de la hoja
+    out["fecha_reg_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_registro", "fecha_hora_registro", "fecha"]), axis=1)
+    out["fecha_lev_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_cierre", "fecha_aprobacion", "fecha_hora_levantamiento"]), axis=1)
+    
+    out["fecha_reg_dt"] = pd.to_datetime(out["fecha_reg_str"], errors="coerce")
+    out["fecha_lev_dt"] = pd.to_datetime(out["fecha_lev_str"], errors="coerce")
+    
+    # Cálculo del tiempo transcurrido en días si no estuviese ya calculado
+    dias_calc = (out["fecha_lev_dt"] - out["fecha_reg_dt"]).dt.total_seconds() / 86400
+    dias_directos = pd.to_numeric(out.apply(lambda r: obtener_valor_columna(r, ["tiempo_levantamiento_dias", "fecha_inspeccion"]), axis=1), errors="coerce")
+    
+    out["tiempo_calculado_dias"] = dias_directos.fillna(dias_calc)
+    out["plazo_num"] = pd.to_numeric(out.apply(lambda r: obtener_valor_columna(r, ["plazo_objetivo_dias", "fecha_ejecucion"], default="3"), axis=1), errors="coerce").fillna(3)
+    
     return out
 
 
@@ -249,7 +237,7 @@ if formato == "📊 Dashboard de Indicadores":
 
     df_raw = st.session_state.db_ncrs.copy()
 
-    if df_raw.empty or df_raw["ncr"].dropna().empty:
+    if df_raw.empty or "ncr" not in df_raw.columns or df_raw["ncr"].dropna().empty:
         st.info("Aún no existen NCR registradas. Registra NCR desde el Formato 1 para activar el panel.")
     else:
         df_calc = preparar_df_indicadores(df_raw)
@@ -285,11 +273,19 @@ if formato == "📊 Dashboard de Indicadores":
             st.caption(f"Oportunas: {m['n_oportunas']} de {m['n_cerradas_con_plazo']} con plazo")
 
         st.markdown("### Trazabilidad Individual")
-        tabla = df_f[[
-            "ncr", "proyecto", "fecha_hora_registro", "fecha_hora_levantamiento",
-            "estado_ncr", "plazo_objetivo_dias", "tiempo_calculado_dias", "causa_raiz", "empresa"
-        ]].copy()
-        tabla["tiempo_calculado_dias"] = tabla["tiempo_calculado_dias"].round(2)
+        
+        # Mapeo de columnas para la tabla limpia
+        tabla = pd.DataFrame()
+        tabla["ncr"] = df_f["ncr"]
+        tabla["proyecto"] = df_f["proyecto"]
+        tabla["fecha_hora_registro"] = df_f["fecha_reg_str"]
+        tabla["fecha_hora_levantamiento"] = df_f["fecha_lev_str"]
+        tabla["estado_ncr"] = df_f["estado_ncr"]
+        tabla["plazo_objetivo_dias"] = df_f["plazo_num"]
+        tabla["tiempo_calculado_dias"] = df_f["tiempo_calculado_dias"].round(2)
+        tabla["causa_raiz"] = df_f["causa_raiz"]
+        tabla["empresa"] = df_f["empresa"]
+
         st.dataframe(tabla, use_container_width=True, hide_index=True)
 
 # ==============================================================================
@@ -383,7 +379,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
         )
 
         if st.button("💾 Guardar NCR en Google Sheets"):
-            if ncr_num in st.session_state.db_ncrs["ncr"].astype(str).tolist():
+            if "ncr" in st.session_state.db_ncrs.columns and ncr_num in st.session_state.db_ncrs["ncr"].astype(str).tolist():
                 st.error(f"La NCR {ncr_num} ya existe. Evita duplicar registros.")
             else:
                 df_guardar = df_edit.copy()
@@ -395,40 +391,38 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     else "Abierta"
                 )
 
-                fila_datos = [
-                    data["num"],
-                    data["proyecto"],
-                    data["fecha"],
-                    data["descripcion"],
-                    data["causa"],
-                    data["empresa"],
-                    data["tipo_res"],
-                    estado_ini,
-                    json.dumps(df_guardar.to_dict(orient="records"), ensure_ascii=False),
-                    json.dumps(["NO Cumplió"] * len(df_guardar), ensure_ascii=False),
-                    json.dumps(["Pendiente de validación/ejecución"] * len(df_guardar), ensure_ascii=False),
-                    "",  # acta_cierre
-                    registro_ts,  # fecha_hora_registro GARANTIZADA
-                    "",  # fecha_hora_levantamiento
-                    int(data["plazo_objetivo"]),
-                    "",  # tiempo_levantamiento_dias
-                    "",  # levantada_oportunamente
-                    "Implementación (Después)",
-                    now_str(),
-                    "",  # supervisor
-                    "",  # dictamen_supervision
-                    "",  # objecion_supervision
-                    1,   # version_resolucion
-                    json.dumps([{
-                        "fecha_hora": registro_ts,
-                        "evento": "NCR registrada",
-                        "detalle": "Registro inicial y generación de propuesta IA",
-                        "estado": estado_ini
-                    }], ensure_ascii=False),
-                    data["analisis"],
-                    data["propuesta"],
-                    data["correo"]
-                ]
+                # Construir la fila completa coincidiendo con la estructura actual de la hoja
+                col_headers = list(st.session_state.db_ncrs.columns)
+                row_dict = {col: "" for col in col_headers}
+                
+                row_dict["ncr"] = data["num"]
+                row_dict["proyecto"] = data["proyecto"]
+                row_dict["fecha"] = data["fecha"]
+                row_dict["descripcion"] = data["descripcion"]
+                row_dict["causa_raiz"] = data["causa"]
+                row_dict["empresa"] = data["empresa"]
+                row_dict["tipo_resolucion"] = data["tipo_res"]
+                row_dict["estado_ncr"] = estado_ini
+                row_dict["plan_json"] = json.dumps(df_guardar.to_dict(orient="records"), ensure_ascii=False)
+                row_dict["cumplimiento_json"] = json.dumps(["NO Cumplió"] * len(df_guardar), ensure_ascii=False)
+                row_dict["observaciones_json"] = json.dumps(["Pendiente de validación/ejecución"] * len(df_guardar), ensure_ascii=False)
+                row_dict["fecha_registro"] = registro_ts
+                if "fecha_hora_registro" in row_dict:
+                    row_dict["fecha_hora_registro"] = registro_ts
+                if "plazo_objetivo_dias" in row_dict:
+                    row_dict["plazo_objetivo_dias"] = int(data["plazo_objetivo"])
+                if "fecha_ejecucion" in row_dict:
+                    row_dict["fecha_ejecucion"] = int(data["plazo_objetivo"])
+                if "fase_estudio" in row_dict:
+                    row_dict["fase_estudio"] = "Implementación (Después)"
+                if "causa_raiz_analisis" in row_dict:
+                    row_dict["causa_raiz_analisis"] = data["analisis"]
+                if "propuesta_mitigacion" in row_dict:
+                    row_dict["propuesta_mitigacion"] = data["propuesta"]
+                if "correo_supervision" in row_dict:
+                    row_dict["correo_supervision"] = data["correo"]
+
+                fila_datos = [row_dict.get(c, "") for c in col_headers]
 
                 try:
                     with st.spinner("Guardando registro en Google Sheets..."):
@@ -450,7 +444,7 @@ else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
 
     df_bd = st.session_state.db_ncrs
-    if df_bd.empty or df_bd["ncr"].dropna().empty:
+    if df_bd.empty or "ncr" not in df_bd.columns or df_bd["ncr"].dropna().empty:
         st.warning("No hay No Conformidades registradas.")
     else:
         lista_ncrs = df_bd["ncr"].dropna().astype(str).tolist()
@@ -458,8 +452,8 @@ else:
         idx_fila = df_bd[df_bd["ncr"].astype(str) == ncr_sel].index[0]
         fila_ncr = df_bd.loc[idx_fila].copy()
 
-        st.markdown(f"**Proyecto:** {fila_ncr['proyecto']} | **Estado:** `{fila_ncr['estado_ncr']}`")
-        st.markdown(f"**Ubicación y falla:** {fila_ncr['descripcion']}")
+        st.markdown(f"**Proyecto:** {fila_ncr.get('proyecto','')} | **Estado:** `{fila_ncr.get('estado_ncr','')}`")
+        st.markdown(f"**Ubicación y falla:** {fila_ncr.get('descripcion','')}")
         st.markdown("---")
 
         historial = parse_json_list(fila_ncr.get("historial_json", "[]"), [])
@@ -467,7 +461,7 @@ else:
             with st.expander("🕘 Historial de eventos de la NCR"):
                 st.dataframe(pd.DataFrame(historial), use_container_width=True, hide_index=True)
 
-        estado_actual = str(fila_ncr["estado_ncr"])
+        estado_actual = str(fila_ncr.get("estado_ncr", ""))
 
         # CASO 1: YA LEVANTADA Y CERRADA
         if estado_actual == "Levantada":
@@ -475,7 +469,7 @@ else:
             st.subheader("📜 Acta de Cierre Técnico")
             st.info(fila_ncr.get("acta_cierre", ""))
 
-        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN (OCULTA CHECKLIST)
+        # CASO 2: PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN
         elif estado_actual == "Pendiente Validación Supervisión":
             st.warning("🔒 Esta propuesta se encuentra PENDIENTE DE VALIDACIÓN POR SUPERVISIÓN. El checklist de ejecución se activará una vez aprobada la propuesta.")
 
@@ -503,9 +497,10 @@ else:
                     st.warning("Ingrese el nombre del supervisor antes de registrar el dictamen.")
                 else:
                     st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(sup_nombre)
-                    st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = str(dictamen_sup)
-                    st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = str(objecion_inspector)
-                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
+                    if "dictamen_supervision" in st.session_state.db_ncrs.columns:
+                        st.session_state.db_ncrs.at[idx_fila, "dictamen_supervision"] = str(dictamen_sup)
+                    if "objecion_supervision" in st.session_state.db_ncrs.columns:
+                        st.session_state.db_ncrs.at[idx_fila, "objecion_supervision"] = str(objecion_inspector)
 
                     if "APROBADO" in dictamen_sup:
                         st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (Aprobada por Supervisión)"
@@ -550,7 +545,6 @@ else:
                 if st.button("🔄 Guardar avance de checklist"):
                     st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados, ensure_ascii=False)
                     st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs, ensure_ascii=False)
-                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
 
                     fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
                     requests.post(URL_WEB_APP, json={"row": fila_actualizada})
@@ -560,7 +554,7 @@ else:
 
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # INSPECCIÓN FINAL Y CIERRE TÉCNICO (CON GUARDA DE FECHA LEVANTAMIENTO)
+                # INSPECCIÓN FINAL Y CIERRE TÉCNICO
                 if todos_ejecutados:
                     st.markdown("---")
                     st.subheader("🕵️‍♂️ Inspección y Cierre Técnico por Supervisión")
@@ -578,16 +572,15 @@ else:
                             try:
                                 with st.spinner("Generando borrador de Acta de Cierre Técnico y guardando..."):
                                     resp_cierre = generar_cierre_gpt(
-                                        ncr_sel, fila_ncr["descripcion"], supervisor, obs_supervision
+                                        ncr_sel, fila_ncr.get("descripcion",""), supervisor, obs_supervision
                                     )
 
                                 str_fecha_cierre = f"{fecha_cierre_manual.strftime('%Y-%m-%d')} {datetime.now().strftime('%H:%M:%S')}"
 
-                                # Garantizamos lectura de fecha de registro original
-                                fecha_reg_raw = str(fila_ncr.get("fecha_hora_registro", "")).strip()
+                                # Garantizamos lectura de fecha de registro original probando varios campos posibles de la hoja
+                                fecha_reg_raw = obtener_valor_columna(fila_ncr, ["fecha_registro", "fecha_hora_registro", "fecha"])
                                 if not fecha_reg_raw:
-                                    fecha_reg_raw = f"{str(fila_ncr.get('fecha', now_str()[:10]))} 08:00:00"
-                                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_registro"] = fecha_reg_raw
+                                    fecha_reg_raw = f"{str_fecha_cierre[:10]} 08:00:00"
 
                                 try:
                                     f_inicio = pd.to_datetime(fecha_reg_raw)
@@ -599,11 +592,18 @@ else:
                                 texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha Cierre: {str_fecha_cierre}\nTiempo Levantamiento: {dias_calc} días\n\n{resp_cierre}"
 
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
-                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = str(str_fecha_cierre)
-                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = str(dias_calc)
-                                st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(supervisor)
-                                st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = str(texto_acta)
-                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
+                                
+                                # Guardar en campos correspondientes de la hoja
+                                for c_lev in ["fecha_aprobacion", "fecha_cierre", "fecha_hora_levantamiento"]:
+                                    if c_lev in st.session_state.db_ncrs.columns:
+                                        st.session_state.db_ncrs.at[idx_fila, c_lev] = str(str_fecha_cierre)
+
+                                for c_t in ["fecha_inspeccion", "tiempo_levantamiento_dias"]:
+                                    if c_t in st.session_state.db_ncrs.columns:
+                                        st.session_state.db_ncrs.at[idx_fila, c_t] = str(dias_calc)
+
+                                if "acta_cierre" in st.session_state.db_ncrs.columns:
+                                    st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = str(texto_acta)
 
                                 fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
                                 res = requests.post(URL_WEB_APP, json={"row": fila_actualizada})

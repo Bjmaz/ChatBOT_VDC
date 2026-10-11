@@ -1,10 +1,11 @@
-import streamlit as st
-import openai
-from datetime import datetime, timedelta
-import pandas as pd
 import json
+from datetime import datetime, timedelta
+import openai
+import pandas as pd
 import requests
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
+
 # ==============================================================================
 # CONFIGURACIÓN E INTEGRACIÓN
 # ==============================================================================
@@ -14,7 +15,7 @@ client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 🔗 URL de tu Web App de Google Apps Script
-URL_WEB_APP = "https://script.google.com/macros/s/AKfycbzL25onMtSFb2VYdBBdWKbg9qqoj_9y_7kB8qBpY7olqXUhIx3h_F2A3MPeH_Hw7N29/exec"
+URL_WEB_APP = "https://script.google.com/macros/s/AKfycbySzCKsLidENfNjIFbDWPTxnETmUX8u6vfUdNLIROgFmdcDj9yQMBFH9yqB9zA_F44Z/exec"
 
 CONTRATISTAS_LISTA = [
     "OBRA CIVIL", "PINTURA", "PAPEL TAPIZ", "MELAMINE", "LAMINADO/PARQUET",
@@ -42,7 +43,7 @@ def empty_db():
 
 
 def load_db():
-    """Carga la base de datos de lectura desde Google Sheets asegurando tipos de texto."""
+    """Carga la base de datos desde Google Sheets asegurando tipos de texto."""
     try:
         df = conn.read(ttl=0)
         if df is None or df.empty:
@@ -58,17 +59,15 @@ def load_db():
                     default = 3
                 elif col == "version_resolucion":
                     default = 1
-                elif col in ["causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision"]:
-                    default = ""
                 else:
                     default = ""
                 df[col] = default
 
-        # 🔧 Convertir explícitamente columnas de texto a string para evitar TypeError (float64)
         cols_texto = [
             "acta_cierre", "supervisor", "dictamen_supervision", "objecion_supervision",
             "estado_ncr", "descripcion", "causa_raiz", "empresa", "tipo_resolucion",
-            "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision"
+            "causa_raiz_analisis", "propuesta_mitigacion", "correo_supervision",
+            "fecha_hora_registro", "fecha_hora_levantamiento", "tiempo_levantamiento_dias"
         ]
         for c in cols_texto:
             if c in df.columns:
@@ -103,7 +102,6 @@ def parse_json_list(value, default=None):
 
 
 def calcular_metricas(df):
-    """Calcula los indicadores sobre el conjunto filtrado."""
     if df.empty:
         return {
             "total": 0, "cerradas": 0, "pendientes": 0,
@@ -115,9 +113,7 @@ def calcular_metricas(df):
     cerradas = int(df["estado_ncr"].isin(ESTADOS_CERRADOS).sum())
     pendientes = total - cerradas
 
-    fecha_reg = pd.to_datetime(df["fecha_hora_registro"], errors="coerce")
-    fecha_fin = pd.to_datetime(df["fecha_hora_levantamiento"], errors="coerce")
-    tiempos = (fecha_fin - fecha_reg).dt.total_seconds() / 86400
+    tiempos = pd.to_numeric(df["tiempo_levantamiento_dias"], errors="coerce")
     validos = tiempos.notna() & (tiempos >= 0)
 
     tnc = float(tiempos[validos].mean()) if validos.any() else None
@@ -146,9 +142,7 @@ def preparar_df_indicadores(df):
     out = df.copy()
     out["fecha_reg_dt"] = pd.to_datetime(out["fecha_hora_registro"], errors="coerce")
     out["fecha_lev_dt"] = pd.to_datetime(out["fecha_hora_levantamiento"], errors="coerce")
-    out["tiempo_calculado_dias"] = (
-        out["fecha_lev_dt"] - out["fecha_reg_dt"]
-    ).dt.total_seconds() / 86400
+    out["tiempo_calculado_dias"] = pd.to_numeric(out["tiempo_levantamiento_dias"], errors="coerce")
     out["plazo_num"] = pd.to_numeric(out["plazo_objetivo_dias"], errors="coerce")
     return out
 
@@ -440,7 +434,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                 try:
                     with st.spinner("Guardando registro en Google Sheets..."):
                         res = requests.post(URL_WEB_APP, json={"row": fila_datos})
-                    if res.text == "OK":
+                    if "OK" in res.text:
                         st.success(f"✅ NCR {data['num']} guardada correctamente en Google Sheets.")
                         st.session_state.pop("temp_ncr", None)
                         st.session_state.db_ncrs = load_db()
@@ -451,7 +445,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
                     st.error(f"Error de conexión al guardar: {e}")
 
 # ==============================================================================
-# 📱 FORMATO 2: MONITOREO EN CAMPO (COMPLETO Y CORREGIDO)
+# 📱 FORMATO 2: MONITOREO EN CAMPO
 # ==============================================================================
 else:
     st.header("📱 Formato 2: Monitoreo en Campo y Liberación por Supervisión")
@@ -485,7 +479,7 @@ else:
                 st.warning("Esta propuesta se encuentra pendiente de validación de Supervisión.")
 
                 col_v1, col_v2 = st.columns(2)
-                sup_nombre = col_v1.text_input("👤 Nombre del Inspector/Supervisor", value=fila_ncr.get("supervisor", ""))
+                sup_nombre = col_v1.text_input("👤 Nombre del Inspector/Supervisor", value=str(fila_ncr.get("supervisor", "")))
                 dictamen_sup = col_v2.radio(
                     "📌 Dictamen de Supervisión:",
                     [
@@ -499,7 +493,7 @@ else:
                 if "RECHAZADO" in dictamen_sup:
                     objecion_inspector = st.text_area(
                         "🗣️ Razón o motivo del rechazo del Inspector",
-                        value=fila_ncr.get("objecion_supervision", ""),
+                        value=str(fila_ncr.get("objecion_supervision", "")),
                         placeholder="Escribe la objeción técnica..."
                     )
 
@@ -511,41 +505,17 @@ else:
 
                     if "APROBADO" in dictamen_sup:
                         st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (Aprobada por Supervisión)"
-                        st.success("Propuesta aprobada. Se habilitó el checklist.")
-                        st.rerun()
-
-                    elif "RECHAZADO (Reiterar" in dictamen_sup:
-                        if not objecion_inspector:
-                            st.warning("Ingrese la objeción del inspector para generar la refutación.")
-                        else:
-                            try:
-                                with st.spinner("Generando borrador de respuesta técnica..."):
-                                    prompt_reiterar = f"""
-La Supervisión ({sup_nombre}) rechazó la propuesta inicial para {ncr_sel}: '{fila_ncr['descripcion']}'.
-Objeción del Inspector: '{objecion_inspector}'.
-Genera un borrador de respuesta técnica formal que responda a la objeción sin inventar normas.
-"""
-                                    nuevo_correo = client.chat.completions.create(
-                                        model="gpt-4o-mini",
-                                        messages=[{"role": "user", "content": prompt_reiterar}]
-                                    ).choices[0].message.content
-                                st.session_state[f"refutacion_{ncr_sel}"] = nuevo_correo
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error generando refutación: {e}")
-
                     elif "RECHAZADO DEFINITIVO" in dictamen_sup:
                         st.session_state.db_ncrs.at[idx_fila, "tipo_resolucion"] = "Reingreso Interpartidas (Secuencia Lookahead)"
                         st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Abierta (En Reconstrucción Lookahead)"
-                        st.success("Reestructurado a secuencia Lookahead.")
-                        st.rerun()
 
-            if f"refutacion_{ncr_sel}" in st.session_state:
-                st.markdown("---")
-                st.info("💡 BORRADOR DE RESPUESTA TÉCNICA")
-                st.text_area("Texto para responder al Inspector:", value=st.session_state[f"refutacion_{ncr_sel}"], height=200)
+                    fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
+                    requests.post(URL_WEB_APP, json={"row": fila_actualizada})
+                    st.success("Dictamen guardado correctamente.")
+                    st.session_state.db_ncrs = load_db()
+                    st.rerun()
 
-            # CHECKLIST DE PASOS
+            # CHECKLIST DE PASOS DE EJECUCIÓN
             plan = parse_json_list(fila_ncr.get("plan_json", "[]"), [])
             estado_pasos = parse_json_list(fila_ncr.get("cumplimiento_json", "[]"), [])
             obs_pasos = parse_json_list(fila_ncr.get("observaciones_json", "[]"), [])
@@ -572,51 +542,68 @@ Genera un borrador de respuesta técnica formal que responda a la objeción sin 
                         txt_obs = st.text_input(f"Observación paso {idx + 1}", value=val_obs, key=f"txt_{ncr_sel}_{idx}")
                         nuevas_obs.append(txt_obs)
 
+                if st.button("🔄 Guardar avance de checklist"):
+                    st.session_state.db_ncrs.at[idx_fila, "cumplimiento_json"] = json.dumps(nuevos_estados, ensure_ascii=False)
+                    st.session_state.db_ncrs.at[idx_fila, "observaciones_json"] = json.dumps(nuevas_obs, ensure_ascii=False)
+                    st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
+                    
+                    fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
+                    requests.post(URL_WEB_APP, json={"row": fila_actualizada})
+                    st.success("Avance del checklist guardado correctamente.")
+                    st.session_state.db_ncrs = load_db()
+                    st.rerun()
+
                 todos_ejecutados = len(nuevos_estados) > 0 and all(e == "Cumplió" for e in nuevos_estados)
 
-                # INSPECCIÓN FINAL Y CIERRE CORREGIDO
+                # --------------------------------------------------------------
+                # INSPECCIÓN FINAL Y CIERRE TÉCNICO (CON SELECTOR DE FECHA)
+                # --------------------------------------------------------------
                 if todos_ejecutados:
                     st.markdown("---")
-                    st.subheader("🕵️‍♂️ Inspección y liberación por Supervisión")
-                    supervisor = st.text_input("👤 Inspector / Supervisor de Calidad", value=str(fila_ncr.get("supervisor", "")))
-                    obs_supervision = st.text_area("💬 Comentarios de la inspección")
+                    st.subheader("🕵️‍♂️ Inspección y Cierre Técnico por Supervisión")
+
+                    col_sup1, col_sup2 = st.columns(2)
+                    supervisor = col_sup1.text_input("👤 Inspector / Supervisor de Calidad", value=str(fila_ncr.get("supervisor", "")))
+                    fecha_cierre_manual = col_sup2.date_input("📅 Fecha de Levantamiento / Cierre en campo", value=datetime.now())
+
+                    obs_supervision = st.text_area("💬 Comentarios de la inspección final")
 
                     if st.button("🔒 Confirmar inspección y registrar cierre"):
                         if not supervisor.strip():
                             st.warning("Ingrese el nombre del supervisor antes de cerrar.")
                         else:
                             try:
-                                with st.spinner("Generando borrador de Acta de Cierre Técnico y guardando en Google Sheets..."):
+                                with st.spinner("Generando borrador de Acta de Cierre Técnico y guardando..."):
                                     resp_cierre = generar_cierre_gpt(
                                         ncr_sel, fila_ncr["descripcion"], supervisor, obs_supervision
                                     )
 
-                                fecha_cierre = now_str()
-                                fecha_inicio = pd.to_datetime(fila_ncr.get("fecha_hora_registro"), errors="coerce")
-                                fecha_fin = pd.to_datetime(fecha_cierre, errors="coerce")
-                                dias = round((fecha_fin - fecha_inicio).total_seconds() / 86400, 2) if pd.notna(fecha_inicio) else ""
+                                str_fecha_cierre = f"{fecha_cierre_manual.strftime('%Y-%m-%d')} {datetime.now().strftime('%H:%M:%S')}"
+                                
+                                # Cálculo exacto de días transcurridos
+                                fecha_reg_raw = fila_ncr.get("fecha_hora_registro")
+                                try:
+                                    f_inicio = pd.to_datetime(fecha_reg_raw)
+                                    f_fin = pd.to_datetime(str_fecha_cierre)
+                                    dias_calc = round(max(0.1, (f_fin - f_inicio).total_seconds() / 86400), 2)
+                                except Exception:
+                                    dias_calc = 1.0
 
-                                texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha: {fecha_cierre}\n\n{resp_cierre}"
-
-                                # Forzar columnas a objeto/string antes de la asignación en memoria
-                                st.session_state.db_ncrs["acta_cierre"] = st.session_state.db_ncrs["acta_cierre"].astype(str)
-                                st.session_state.db_ncrs["supervisor"] = st.session_state.db_ncrs["supervisor"].astype(str)
-                                st.session_state.db_ncrs["estado_ncr"] = st.session_state.db_ncrs["estado_ncr"].astype(str)
+                                texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha de Cierre: {str_fecha_cierre}\nTiempo Levantamiento: {dias_calc} días\n\n{resp_cierre}"
 
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
-                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = str(fecha_cierre)
-                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = str(dias)
+                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_levantamiento"] = str(str_fecha_cierre)
+                                st.session_state.db_ncrs.at[idx_fila, "tiempo_levantamiento_dias"] = str(dias_calc)
                                 st.session_state.db_ncrs.at[idx_fila, "supervisor"] = str(supervisor)
                                 st.session_state.db_ncrs.at[idx_fila, "acta_cierre"] = str(texto_acta)
+                                st.session_state.db_ncrs.at[idx_fila, "fecha_hora_ultima_actualizacion"] = now_str()
 
-                                # Extraemos la lista limpia formateada para la petición
+                                # Petición HTTP a la Web App de Apps Script para ACTUALIZAR LA FILA
                                 fila_actualizada = st.session_state.db_ncrs.loc[idx_fila].fillna("").astype(str).tolist()
-
-                                # Petición HTTP a la Web App de Apps Script
                                 res = requests.post(URL_WEB_APP, json={"row": fila_actualizada})
 
-                                if res.text == "OK":
-                                    st.success(f"✅ {ncr_sel} liberada y cerrada correctamente en Google Sheets.")
+                                if "OK" in res.text:
+                                    st.success(f"✅ {ncr_sel} liberada y cerrada correctamente. Tiempo registrado: {dias_calc} días.")
                                     st.session_state.db_ncrs = load_db()
                                     st.rerun()
                                 else:

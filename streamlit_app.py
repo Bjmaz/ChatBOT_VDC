@@ -1,8 +1,3 @@
-¡Tienes toda la razón! En el bloque anterior faltó colocar explícitamente el encabezado de las librerías al inicio.
-
-Aquí tienes el archivo streamlit_app.py completo, que empieza con todas las importaciones necesarias (import streamlit as st, import openai, etc.) y contiene el desarrollo completo de los 3 módulos:
-
-Python
 import streamlit as st
 import openai
 from datetime import datetime, timedelta

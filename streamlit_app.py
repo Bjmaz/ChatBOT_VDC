@@ -37,11 +37,11 @@ def load_db():
         df = conn.read(ttl=0)
         if df is None or df.empty:
             return empty_db()
-        
+
         df = df.fillna("")
         for col in df.columns:
             df[col] = df[col].astype(str).replace("nan", "").replace("None", "").str.strip()
-            
+
         return df
     except Exception as e:
         st.session_state.load_error = str(e)
@@ -115,14 +115,14 @@ def calcular_metricas(df):
 
 def preparar_df_indicadores(df):
     out = df.copy()
-    
+
     # Mapeo de fechas
     out["fecha_reg_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_registro", "fecha_hora_registro", "fecha"]), axis=1)
     out["fecha_lev_str"] = out.apply(lambda r: obtener_valor_columna(r, ["fecha_cierre", "fecha_aprobacion", "fecha_hora_levantamiento"]), axis=1)
-    
+
     out["fecha_reg_dt"] = pd.to_datetime(out["fecha_reg_str"], errors="coerce")
     out["fecha_lev_dt"] = pd.to_datetime(out["fecha_lev_str"], errors="coerce")
-    
+
     # Cálculo preciso en días (mismo día = mínimo 1.0 día)
     def rel_dias(r):
         if pd.notna(r["fecha_lev_dt"]) and pd.notna(r["fecha_reg_dt"]):
@@ -133,61 +133,52 @@ def preparar_df_indicadores(df):
 
     out["tiempo_calculado_dias"] = out.apply(rel_dias, axis=1)
     out["plazo_num"] = pd.to_numeric(out.apply(lambda r: obtener_valor_columna(r, ["plazo_objetivo_dias", "fecha_ejecucion"], default="3"), axis=1), errors="coerce").fillna(3)
-    
+
     return out
 
 
-def procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_res, fecha_inicio_str, observacion_previa=""):
+def procesar_ncr_gpt(ncr_num, descripcion, contratista_causa, tipo_res, fecha_inicio_str, plazo_objetivo=3, observacion_previa=""):
     try:
         fecha_base = datetime.strptime(str(fecha_inicio_str), "%Y-%m-%d")
     except Exception:
         fecha_base = datetime.now()
 
     f_p1 = fecha_base.strftime("%Y-%m-%d")
-    f_p2 = (fecha_base + timedelta(days=1)).strftime("%Y-%m-%d")
-    f_p4 = (fecha_base + timedelta(days=2)).strftime("%Y-%m-%d")
 
-    if tipo_res == "Solución Directa Todista / Criterio de Supervisión":
-        prompt = f"""
-Actúa como asistente de ingeniería de calidad y planificación VDC para una obra de edificación en Perú.
-Analiza la NCR {ncr_num}. Descripción y ubicación: '{descripcion}'.
-Especialidad principal: {contratista_causa}. Criterio o hipótesis del usuario: '{observacion_previa}'.
-Fecha base para el plan: {f_p1}.
-Contratistas disponibles en el proyecto: {", ".join(CONTRATISTAS_LISTA)}.
+    prompt = f"""
+Actúa como un Ingeniero Senior de Calidad y Planificación VDC en obras de edificación en Perú.
+Analiza la No Conformidad {ncr_num}:
+- Descripción y Ubicación: '{descripcion}'
+- Especialidad Principal Involucrada: {contratista_causa}
+- Plazo Objetivo Estimado: {plazo_objetivo} días
+- Modalidad de Subsanación: {tipo_res}
+- Criterio o comentario adicional del usuario: '{observacion_previa}'
+- Fecha inicial de planificación: {f_p1}
 
-Devuelve ÚNICAMENTE JSON válido con esta estructura exacta:
+Contratistas disponibles en el proyecto: {", ".join(CONTRATISTAS_LISTA)}
+
+INSTRUCCIONES CLAVE PARA GENERAR LA SECUENCIA LOOKAHEAD:
+1. NO USES PLANTILLAS GENÉRICAS NI TE LIMITES A UN NÚMERO FIJO DE PASOS. El número de pasos DEBE SER VARIABLE (pueden ser desde 2 hasta 8 pasos o más) según la magnitud técnica y la cantidad de pisos, sectores o departamentos afectados descritos en la falla.
+2. Analiza el nivel de complejidad: si la observación involucra varios pisos, sectores o áreas grandes, incrementa el número de actividades detallando el proceso constructivo real paso a paso.
+3. Las fechas programadas (`fecha_prog`) de los pasos DEBEN DISTRIBUIRSE PROGRESIVAMENTE entre el día 1 y el día {plazo_objetivo} del plazo especificado, respetando la secuencia lógica constructiva y tiempos de secado/fraguado.
+4. Asigna a cada paso el contratista responsable adecuado según la especialidad de la tarea.
+
+Devuelve ÚNICAMENTE un JSON estricto con esta estructura exacta:
 {{
-  "causa_raiz_analisis": "Análisis de causa raíz...",
+  "causa_raiz_analisis": "Análisis técnico de causa raíz e interferencias entre partidas",
   "complejidad": "BAJA | MEDIA | ALTA",
-  "estrategia_recomendada": "SOLUCION_DIRECTA | SOLUCION_DIRECTA_CON_APOYO | RECONSTRUCCION_LOOKAHEAD",
-  "justificacion_no_retrabajo": "Sustento para evitar retrabajo invasivo...",
-  "propuesta_mitigacion": "Propuesta técnica...",
-  "verificaciones_previas": ["Verificación 1", "Verificación 2"],
-  "referencias_por_verificar": ["Plano E.T. aplicable"],
-  "correo_supervision": "Texto de propuesta para la Supervisión...",
+  "estrategia_recomendada": "SOLUCION_DIRECTA | RECONSTRUCCION_LOOKAHEAD",
+  "justificacion_no_retrabajo": "Sustento técnico de la secuencia propuesta",
+  "propuesta_mitigacion": "Resumen ejecutivo del plan de subsanación",
+  "correo_supervision": "Texto preliminar borrador para enviar a la Supervisión",
   "secuencia_propuesta": [
-    {{"paso": 1, "fecha_prog": "{f_p1}", "contratista": "TODISTA / CUADRILLA INTERNA", "actividad": "Ejecución de sello o resane", "horas": 2}}
-  ]
-}}
-"""
-    else:
-        prompt = f"""
-Analiza la No Conformidad {ncr_num}: '{descripcion}'.
-Especialidad involucrada: {contratista_causa}.
-
-Diseña una secuencia preliminar de reingreso interpartidas Lookahead.
-
-Devuelve JSON estricto:
-{{
-  "causa_raiz_analisis": "Análisis de causa raíz e interferencias",
-  "justificacion_no_retrabajo": "No aplica: se plantea reconstrucción/reingreso",
-  "propuesta_mitigacion": "Secuencia preliminar Lookahead",
-  "correo_supervision": "",
-  "secuencia_propuesta": [
-    {{"paso": 1, "fecha_prog": "{f_p1}", "contratista": "{contratista_causa}", "actividad": "Desmontaje o retiro del elemento afectado", "horas": 2}},
-    {{"paso": 2, "fecha_prog": "{f_p2}", "contratista": "OBRA CIVIL", "actividad": "Resane, nivelación y preparación de base", "horas": 4}},
-    {{"paso": 3, "fecha_prog": "{f_p2}", "contratista": "PINTURA", "actividad": "Restitución de acabado", "horas": 4}},
-    {{"paso": 4, "fecha_prog": "{f_p4}", "contratista": "{contratista_causa}", "actividad": "Instalación/montaje final", "horas": 2}}
+    {{
+      "paso": 1,
+      "fecha_prog": "YYYY-MM-DD",
+      "contratista": "NOMBRE_CONTRATISTA",
+      "actividad": "Descripción específica y detallada de la tarea técnica en campo",
+      "horas": 4
+    }}
   ]
 }}
 """
@@ -276,7 +267,7 @@ if formato == "📊 Dashboard de Indicadores":
             st.caption(f"Oportunas: {m['n_oportunas']} de {m['n_cerradas_con_plazo']} con plazo")
 
         st.markdown("### Trazabilidad Individual")
-        
+
         tabla = pd.DataFrame()
         tabla["ncr"] = df_f["ncr"]
         tabla["proyecto"] = df_f["proyecto"]
@@ -328,9 +319,15 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
 
     if btn_analizar and descripcion and ncr_num:
         try:
-            with st.spinner("Procesando análisis de restricciones con IA..."):
+            with st.spinner("Procesando análisis de restricciones y generando secuencia dinámicamente..."):
                 res_json = json.loads(procesar_ncr_gpt(
-                    ncr_num, descripcion, contratista_causa, tipo_resolucion, str(fecha_reg), obs_adicional
+                    ncr_num=ncr_num,
+                    descripcion=descripcion,
+                    contratista_causa=contratista_causa,
+                    tipo_res=tipo_resolucion,
+                    fecha_inicio_str=str(fecha_reg),
+                    plazo_objetivo=int(plazo_objetivo),
+                    observacion_previa=obs_adicional
                 ))
                 st.session_state.temp_ncr = {
                     "num": ncr_num, "proyecto": proyecto, "fecha": str(fecha_reg),
@@ -395,7 +392,7 @@ elif formato == "Formato 1: Registro e ICE (Oficina)":
 
                 col_headers = list(st.session_state.db_ncrs.columns)
                 row_dict = {col: "" for col in col_headers}
-                
+
                 row_dict["ncr"] = data["num"]
                 row_dict["proyecto"] = data["proyecto"]
                 row_dict["fecha"] = data["fecha"]
@@ -589,7 +586,7 @@ else:
                                 texto_acta = f"Acta de Cierre Técnico - NCR {ncr_sel}\nAprobado por: {supervisor}\nFecha Cierre: {str_fecha_cierre}\nTiempo Levantamiento: {dias_calc} días\n\n{resp_cierre}"
 
                                 st.session_state.db_ncrs.at[idx_fila, "estado_ncr"] = "Levantada"
-                                
+
                                 for c_lev in ["fecha_aprobacion", "fecha_cierre", "fecha_hora_levantamiento"]:
                                     if c_lev in st.session_state.db_ncrs.columns:
                                         st.session_state.db_ncrs.at[idx_fila, c_lev] = str(str_fecha_cierre)
